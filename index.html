@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ECHO — 따라하기만 하면 되는 영어</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css?v=2" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <header class="top">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">ECHO</span>
+      </div>
+      <p class="tagline">듣고 → 따라하고 → 입이 열립니다</p>
+    </header>
+
+    <main>
+      <section class="hero" id="home-view">
+        <div class="hero-copy">
+          <h1>따라하기만 하면<br />영어가 됩니다</h1>
+          <p class="hero-sub">
+            문장을 듣고, 바로 따라 말하세요. 문법 공부 없이
+            <em>입과 귀가 먼저</em> 익숙해지는 연습입니다.
+          </p>
+          <div class="cta-row">
+            <button class="btn primary" id="start-btn" type="button">오늘 연습 시작</button>
+            <button class="btn ghost" id="continue-btn" type="button">이어서 하기</button>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="wave-ring r1"></div>
+          <div class="wave-ring r2"></div>
+          <div class="wave-ring r3"></div>
+          <div class="mic-core">
+            <span>ECHO</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="pick" id="pick-view" hidden>
+        <div class="section-head">
+          <h2>연습할 주제</h2>
+          <p>하루 한 세트면 충분합니다. 따라 말하는 데만 집중하세요.</p>
+        </div>
+        <div class="topic-grid" id="topic-grid"></div>
+      </section>
+
+      <section class="practice" id="practice-view" hidden>
+        <div class="practice-bar">
+          <button class="btn text" id="back-btn" type="button">← 주제</button>
+          <div class="progress-wrap">
+            <div class="progress-meta">
+              <span id="topic-label">Daily</span>
+              <span id="progress-text">1 / 8</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+          </div>
+          <div class="voice-tools">
+            <div class="speed-wrap">
+              <label for="voice">미국 음성</label>
+              <select id="voice">
+                <option value="en-US-AvaNeural" selected>Ava (미국 · 여성)</option>
+                <option value="en-US-EmmaNeural">Emma (미국 · 여성)</option>
+                <option value="en-US-AndrewNeural">Andrew (미국 · 남성)</option>
+              </select>
+            </div>
+            <div class="speed-wrap">
+              <label for="speed">속도</label>
+              <select id="speed">
+                <option value="0.85">느리게</option>
+                <option value="1" selected>보통</option>
+                <option value="1.1">빠르게</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <article class="card-stage">
+          <p class="ko" id="ko-text">한국어 뜻</p>
+          <p class="en" id="en-text">English sentence</p>
+          <p class="hint" id="hint-text">먼저 듣고, 같은 리듬으로 따라 말하세요.</p>
+
+          <div class="phase" id="phase-badge">READY</div>
+          <p class="voice-note" id="voice-note">미국인 자연 발음 파일로 재생합니다.</p>
+
+          <div class="controls">
+            <button class="ctrl" id="listen-btn" type="button" title="듣기">
+              <span class="ctrl-icon">▶</span>
+              <span>듣기</span>
+            </button>
+            <button class="ctrl main" id="echo-btn" type="button" title="따라하기">
+              <span class="ctrl-icon">◎</span>
+              <span>따라하기</span>
+            </button>
+            <button class="ctrl" id="next-btn" type="button" title="다음">
+              <span class="ctrl-icon">→</span>
+              <span>다음</span>
+            </button>
+          </div>
+
+          <div class="mic-status" id="mic-status" hidden>
+            <span class="pulse"></span>
+            <span id="mic-label">말하는 중… 따라 말해 보세요</span>
+          </div>
+          <p class="transcript" id="transcript" hidden></p>
+        </article>
+
+        <div class="tips">
+          <button class="btn ghost small" id="show-en-btn" type="button">영어 가리기/보기</button>
+          <button class="btn ghost small" id="repeat-set-btn" type="button">이 세트 다시</button>
+        </div>
+      </section>
+
+      <section class="done" id="done-view" hidden>
+        <h2>오늘 세트 완료</h2>
+        <p id="done-summary">잘했어요. 입이 기억할 때까지 같은 세트를 반복해도 좋습니다.</p>
+        <div class="cta-row">
+          <button class="btn primary" id="again-btn" type="button">같은 세트 한 번 더</button>
+          <button class="btn ghost" id="home-btn" type="button">다른 주제</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p>마이크 권한을 허용하면 따라 말한 내용도 확인할 수 있어요. (Chrome 권장)</p>
+    </footer>
+
+    <script src="./data.js?v=2"></script>
+    <script src="./app.js?v=2"></script>
+  </body>
+</html>
