@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=4" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -71,17 +71,17 @@
 
         <div id="quiz-upload-panel">
           <article class="card-stage quiz-card">
-            <h2 class="quiz-title">영어 텍스트 사진으로 퀴즈 만들기</h2>
-            <p class="hint">교재, 노트, 자막 캡처처럼 영어가 보이는 이미지를 올리면 빈칸 퀴즈로 바꿔 줍니다.</p>
+            <h2 class="quiz-title">숫자 옆 영어로 스펠링 퀴즈</h2>
+            <p class="hint">1, 2, 3처럼 번호 옆에 영어가 있는 사진을 올리세요. 한국어로 뜻을 물어보고, 영어 스펠링을 직접 입력합니다.</p>
             <label class="dropzone" id="quiz-dropzone">
               <input id="quiz-file" type="file" accept="image/*" hidden />
               <span class="dropzone-title">사진을 선택하거나 여기에 놓기</span>
-              <span class="dropzone-sub">JPG, PNG · 영어 글자가 선명할수록 정확해요</span>
+              <span class="dropzone-sub">예: 1 apple &nbsp; 2 thank you</span>
             </label>
             <img id="quiz-preview" class="quiz-preview" alt="올린 이미지 미리보기" hidden />
             <p class="voice-note" id="quiz-ocr-status">아직 사진을 올리지 않았습니다.</p>
-            <label class="quiz-text-label" for="quiz-text">인식된 영어 (직접 고칠 수 있어요)</label>
-            <textarea id="quiz-text" rows="7" placeholder="사진에서 읽은 영어가 여기에 나타납니다."></textarea>
+            <label class="quiz-text-label" for="quiz-text">인식된 목록 (번호. 영어) · 틀리면 고치세요</label>
+            <textarea id="quiz-text" rows="8" placeholder="1. apple&#10;2. thank you"></textarea>
             <div class="cta-row">
               <button class="btn primary" id="quiz-start-btn" type="button">퀴즈 시작</button>
             </div>
@@ -89,12 +89,24 @@
         </div>
 
         <article class="card-stage quiz-card" id="quiz-play-panel" hidden>
-          <p class="ko" id="quiz-prompt">빈칸에 들어갈 단어를 고르세요</p>
-          <p class="en" id="quiz-sentence">_____</p>
-          <div class="quiz-options" id="quiz-options"></div>
+          <p class="ko" id="quiz-prompt">다음 뜻의 영어 스펠링을 쓰세요</p>
+          <p class="en" id="quiz-sentence">사과</p>
+          <form id="quiz-form" class="quiz-form">
+            <input
+              id="quiz-answer"
+              class="quiz-answer"
+              type="text"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="영어 스펠링 입력"
+            />
+            <button class="btn primary" id="quiz-check-btn" type="submit">확인</button>
+          </form>
           <p class="transcript" id="quiz-feedback" hidden></p>
           <div class="cta-row">
-            <button class="btn primary" id="quiz-next-btn" type="button" hidden>다음</button>
+            <button class="btn ghost" id="quiz-next-btn" type="button" hidden>다음</button>
           </div>
         </article>
       </section>
@@ -182,8 +194,8 @@
       <p>마이크 권한을 허용하면 따라 말한 내용도 확인할 수 있어요. (Chrome 권장)</p>
     </footer>
 
-    <script src="./data.js?v=4"></script>
-    <script src="./quiz.js?v=4"></script>
-    <script src="./app.js?v=4"></script>
+    <script src="./data.js?v=5"></script>
+    <script src="./quiz.js?v=5"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>

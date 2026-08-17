@@ -1,47 +1,6 @@
 (() => {
-  const STOP = new Set([
-    "a",
-    "an",
-    "the",
-    "and",
-    "or",
-    "but",
-    "to",
-    "of",
-    "in",
-    "on",
-    "at",
-    "for",
-    "from",
-    "with",
-    "as",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "am",
-    "it",
-    "this",
-    "that",
-    "these",
-    "those",
-    "i",
-    "you",
-    "he",
-    "she",
-    "we",
-    "they",
-    "my",
-    "your",
-    "our",
-    "their",
-  ]);
-
   const els = {
     view: document.getElementById("quiz-view"),
-    backBtn: document.getElementById("quiz-back-btn"),
     progressText: document.getElementById("quiz-progress-text"),
     progressFill: document.getElementById("quiz-progress-fill"),
     uploadPanel: document.getElementById("quiz-upload-panel"),
@@ -54,7 +13,9 @@
     startBtn: document.getElementById("quiz-start-btn"),
     prompt: document.getElementById("quiz-prompt"),
     sentence: document.getElementById("quiz-sentence"),
-    options: document.getElementById("quiz-options"),
+    form: document.getElementById("quiz-form"),
+    answer: document.getElementById("quiz-answer"),
+    checkBtn: document.getElementById("quiz-check-btn"),
     feedback: document.getElementById("quiz-feedback"),
     nextBtn: document.getElementById("quiz-next-btn"),
   };
@@ -69,7 +30,7 @@
 
   function loadScript(src) {
     return new Promise((resolve, reject) => {
-      if (document.querySelector(`script[src="${src}"]`)) {
+      if (window.Tesseract) {
         resolve();
         return;
       }
@@ -82,116 +43,195 @@
     });
   }
 
-  async function ensureOcr() {
-    if (window.Tesseract) return window.Tesseract;
-    els.ocrStatus.textContent = "글자 인식 엔진을 불러오는 중…";
-    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
-    return window.Tesseract;
-  }
-
-  function shuffle(list) {
-    const next = [...list];
-    for (let i = next.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [next[i], next[j]] = [next[j], next[i]];
-    }
-    return next;
-  }
-
-  function wordsIn(text) {
-    return (text.match(/[A-Za-z']+/g) || []).filter(Boolean);
-  }
-
-  function contentWords(text) {
-    return wordsIn(text).filter((word) => {
-      const lower = word.toLowerCase();
-      return lower.length >= 3 && !STOP.has(lower);
-    });
-  }
-
-  function splitSentences(text) {
-    const cleaned = text.replace(/\s+/g, " ").trim();
-    const parts = cleaned.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-    const usable = parts.filter((s) => contentWords(s).length >= 1 && wordsIn(s).length >= 4);
-    if (usable.length) return usable;
-    return cleaned
-      .split(/\n+/)
-      .map((s) => s.trim())
-      .filter((s) => contentWords(s).length >= 1 && wordsIn(s).length >= 3);
-  }
-
-  function blankSentence(sentence, answer) {
-    const pattern = new RegExp(`\\b${answer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-    return sentence.replace(pattern, "_____");
-  }
-
-  function buildQuestions(rawText) {
-    const sentences = splitSentences(rawText);
-    const pool = [...new Set(contentWords(rawText).map((w) => w.toLowerCase()))];
-    const questions = [];
-
-    sentences.forEach((sentence) => {
-      const candidates = contentWords(sentence);
-      if (!candidates.length) return;
-      const answer = candidates.sort((a, b) => b.length - a.length)[0];
-      const answerKey = answer.toLowerCase();
-      const distractors = shuffle(pool.filter((w) => w !== answerKey))
-        .slice(0, 3)
-        .map((w) => {
-          const sample = contentWords(rawText).find((item) => item.toLowerCase() === w);
-          return sample || w;
-        });
-      while (distractors.length < 3) {
-        distractors.push(["really", "always", "today", "please"][distractors.length]);
-      }
-      questions.push({
-        sentence: blankSentence(sentence, answer),
-        answer,
-        options: shuffle([answer, ...distractors.slice(0, 3)]),
-      });
-    });
-
-    return questions.slice(0, 12);
-  }
-
   function setProgress(label, ratio) {
     els.progressText.textContent = label;
     els.progressFill.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
   }
 
-  function resetUpload() {
-    els.uploadPanel.hidden = false;
-    els.playPanel.hidden = true;
-    els.text.value = "";
-    els.preview.hidden = true;
-    els.ocrStatus.textContent = "아직 사진을 올리지 않았습니다.";
-    setProgress("사진 올리기", 0);
-    if (state.previewUrl) {
-      URL.revokeObjectURL(state.previewUrl);
-      state.previewUrl = "";
+  function normalizeAnswer(text) {
+    return (text || "")
+      .toLowerCase()
+      .replace(/[’`]/g, "'")
+      .replace(/[^a-z0-9'\s-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function cleanEnglish(text) {
+    return (text || "")
+      .replace(/[가-힣]+/g, " ")
+      .replace(/[|\[\]{}<>~^_=+*#@]/g, " ")
+      .replace(/\s+/g, " ")
+      .replace(/^[\s.,;:!?-]+|[\s.,;:]+$/g, "")
+      .trim();
+  }
+
+  function extractHangul(text) {
+    const parts = (text || "").match(/[가-힣]+(?:\s+[가-힣]+)*/g);
+    return parts ? parts.join(" ").trim() : "";
+  }
+
+  function mergeNumberLines(lines) {
+    const merged = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const next = lines[i + 1];
+      if (/^(?:\d+|[IlO|])[.)]?$/.test(line) && next && /[A-Za-z가-힣]/.test(next)) {
+        merged.push(`${line} ${next}`);
+        i += 1;
+      } else {
+        merged.push(line);
+      }
+    }
+    return merged;
+  }
+
+  function parseNumberedItems(rawText) {
+    const lines = mergeNumberLines(
+      (rawText || "")
+        .split(/\n+/)
+        .map((line) => line.replace(/[|]/g, "1").trim())
+        .filter(Boolean)
+    );
+    const items = [];
+    const seen = new Set();
+
+    lines.forEach((line) => {
+      const match = line.match(/^\s*(?:\d+|[IlO])[.)\-:]{0,2}\s+(.+)$/);
+      if (!match) return;
+      const rest = match[1].trim();
+      const en = cleanEnglish(rest);
+      const ko = extractHangul(rest);
+      const key = normalizeAnswer(en);
+      if (!/[a-z]/i.test(en) || key.length < 2 || seen.has(key)) return;
+      seen.add(key);
+      items.push({ en, ko });
+    });
+
+    if (items.length) return items;
+
+    const inline = [...(rawText || "").matchAll(/(?:^|\s)(?:\d+|[IlO])[.)\-]{0,2}\s*([A-Za-z][A-Za-z'’\s-]{1,40})/g)];
+    inline.forEach((match) => {
+      const en = cleanEnglish(match[1]);
+      const key = normalizeAnswer(en);
+      if (!/[a-z]/i.test(en) || key.length < 2 || seen.has(key)) return;
+      seen.add(key);
+      items.push({ en, ko: "" });
+    });
+
+    if (items.length) return items;
+
+    (rawText || "")
+      .split(/\n+/)
+      .map((line) => cleanEnglish(line))
+      .filter((en) => /[a-z]/i.test(en) && en.split(" ").length <= 8)
+      .forEach((en) => {
+        const key = normalizeAnswer(en);
+        if (key.length < 2 || seen.has(key)) return;
+        seen.add(key);
+        items.push({ en, ko: "" });
+      });
+
+    return items;
+  }
+
+  function formatItemList(items) {
+    return items.map((item, index) => `${index + 1}. ${item.en}${item.ko ? `  ${item.ko}` : ""}`).join("\n");
+  }
+
+  async function translateEnToKo(text) {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ko`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("translate failed");
+    const data = await res.json();
+    const translated = (data?.responseData?.translatedText || "").trim();
+    if (!translated || /error|invalid/i.test(translated)) return "";
+    return translated;
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("이미지를 열 수 없습니다."));
+      image.src = src;
+    });
+  }
+
+  async function preprocessImage(file) {
+    const src = URL.createObjectURL(file);
+    try {
+      const image = await loadImage(src);
+      const scale = Math.max(2.2, 1800 / Math.max(image.width, 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(image.width * scale);
+      canvas.height = Math.round(image.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = pixels.data;
+      let total = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        data[i] = data[i + 1] = data[i + 2] = gray;
+        total += gray;
+      }
+      const avg = total / (data.length / 4);
+      const threshold = Math.max(140, Math.min(200, avg * 0.9));
+      for (let i = 0; i < data.length; i += 4) {
+        const value = data[i] > threshold ? 255 : 0;
+        data[i] = data[i + 1] = data[i + 2] = value;
+      }
+      ctx.putImageData(pixels, 0, 0);
+      return await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  }
+
+  async function runOcr(blob, Tesseract, logger) {
+    const worker = await Tesseract.createWorker("eng", 1, { logger });
+    try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: "6",
+        preserve_interword_spaces: "1",
+        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?'’-:",
+      });
+      const first = await worker.recognize(blob);
+      await worker.setParameters({ tessedit_pageseg_mode: "4" });
+      const second = await worker.recognize(blob);
+      const a = first?.data?.text || "";
+      const b = second?.data?.text || "";
+      return parseNumberedItems(a).length >= parseNumberedItems(b).length ? a : b;
+    } finally {
+      await worker.terminate();
     }
   }
 
   async function recognizeImage(file) {
-    els.ocrStatus.textContent = "사진을 읽고 있습니다…";
-    setProgress("글자 인식 중", 0.15);
-    const Tesseract = await ensureOcr();
-    const result = await Tesseract.recognize(file, "eng", {
-      logger: (info) => {
-        if (info.status === "recognizing text" && info.progress) {
-          setProgress("글자 인식 중", 0.15 + info.progress * 0.7);
-          els.ocrStatus.textContent = `사진을 읽고 있습니다… ${Math.round(info.progress * 100)}%`;
-        }
-      },
+    els.ocrStatus.textContent = "사진을 선명하게 만든 뒤 숫자를 기준으로 읽고 있습니다…";
+    setProgress("글자 인식 중", 0.1);
+    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
+    const blob = await preprocessImage(file);
+    const raw = await runOcr(blob, window.Tesseract, (info) => {
+      if (info.status === "recognizing text" && info.progress) {
+        setProgress("글자 인식 중", 0.15 + info.progress * 0.7);
+        els.ocrStatus.textContent = `번호 옆 영어를 읽는 중… ${Math.round(info.progress * 100)}%`;
+      }
     });
-    const text = (result?.data?.text || "").replace(/[^\S\n]+/g, " ").trim();
-    els.text.value = text;
-    if (!text) {
-      els.ocrStatus.textContent = "글자를 찾지 못했습니다. 더 선명한 영어 사진을 올려 주세요.";
-      setProgress("인식 실패", 0);
+    const items = parseNumberedItems(raw);
+    els.text.value = items.length ? formatItemList(items) : (raw || "").trim();
+    if (!items.length) {
+      els.ocrStatus.textContent =
+        "번호 옆 영어를 잘 못 읽었습니다. 아래 목록을 1. apple 형식으로 직접 고친 뒤 퀴즈를 시작하세요.";
+      setProgress("직접 수정 필요", 0.4);
       return;
     }
-    els.ocrStatus.textContent = "인식이 끝났습니다. 틀린 부분은 고친 뒤 퀴즈를 시작하세요.";
+    els.ocrStatus.textContent = `${items.length}개를 찾았습니다. 틀린 줄만 고친 뒤 퀴즈를 시작하세요.`;
     setProgress("퀴즈 준비", 1);
   }
 
@@ -211,77 +251,126 @@
     }
   }
 
+  async function buildQuestions(rawText) {
+    const items = parseNumberedItems(rawText).slice(0, 12);
+    const questions = [];
+    for (let i = 0; i < items.length; i += 1) {
+      const item = items[i];
+      setProgress(`뜻 만드는 중 ${i + 1}/${items.length}`, (i + 1) / items.length);
+      els.ocrStatus.textContent = `한국어 문제를 만드는 중… ${i + 1}/${items.length}`;
+      let ko = item.ko;
+      if (!ko) {
+        try {
+          ko = await translateEnToKo(item.en);
+        } catch {
+          ko = "";
+        }
+      }
+      questions.push({
+        prompt: ko || item.en,
+        answer: item.en,
+        translated: Boolean(ko),
+      });
+    }
+    return questions;
+  }
+
   function renderQuestion() {
     const item = state.questions[state.index];
     if (!item) return;
     state.answered = false;
-    els.prompt.textContent = "빈칸에 들어갈 단어를 고르세요";
-    els.sentence.textContent = item.sentence;
+    els.prompt.textContent = item.translated
+      ? "다음 뜻의 영어 스펠링을 쓰세요"
+      : "다음 영어를 보고 스펠링을 그대로 쓰세요";
+    els.sentence.textContent = item.prompt;
     els.feedback.hidden = true;
     els.nextBtn.hidden = true;
     els.nextBtn.textContent = state.index >= state.questions.length - 1 ? "결과 보기" : "다음";
+    els.answer.disabled = false;
+    els.checkBtn.disabled = false;
+    els.answer.value = "";
+    els.form.hidden = false;
     setProgress(`${state.index + 1} / ${state.questions.length}`, (state.index + 1) / state.questions.length);
-    els.options.innerHTML = "";
-    item.options.forEach((option) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "quiz-choice";
-      btn.textContent = option;
-      btn.addEventListener("click", () => choose(option, btn));
-      els.options.appendChild(btn);
-    });
+    window.setTimeout(() => els.answer.focus(), 50);
   }
 
-  function choose(option, button) {
+  function checkAnswer(event) {
+    if (event) event.preventDefault();
     if (state.answered) return;
-    state.answered = true;
     const item = state.questions[state.index];
-    const correct = option.toLowerCase() === item.answer.toLowerCase();
+    const typed = els.answer.value.trim();
+    if (!typed) {
+      els.feedback.hidden = false;
+      els.feedback.textContent = "스펠링을 입력해 주세요.";
+      els.answer.focus();
+      return;
+    }
+    state.answered = true;
+    const correct = normalizeAnswer(typed) === normalizeAnswer(item.answer);
     if (correct) state.score += 1;
-    [...els.options.children].forEach((btn) => {
-      btn.disabled = true;
-      if (btn.textContent.toLowerCase() === item.answer.toLowerCase()) btn.classList.add("correct");
-    });
-    if (!correct) button.classList.add("wrong");
+    els.answer.disabled = true;
+    els.checkBtn.disabled = true;
     els.feedback.hidden = false;
     els.feedback.textContent = correct ? "정답입니다." : `오답입니다. 정답은 ${item.answer}`;
     els.nextBtn.hidden = false;
   }
 
-  function startQuiz() {
-    const questions = buildQuestions(els.text.value);
-    if (questions.length < 1) {
-      els.ocrStatus.textContent = "퀴즈를 만들 문장이 부족합니다. 영어 문장이 더 보이게 올려 주세요.";
-      return;
+  async function startQuiz() {
+    els.startBtn.disabled = true;
+    try {
+      const questions = await buildQuestions(els.text.value);
+      if (questions.length < 1) {
+        els.ocrStatus.textContent = "목록이 비었습니다. 1. apple 형식으로 영어를 적어 주세요.";
+        return;
+      }
+      state.questions = questions;
+      state.index = 0;
+      state.score = 0;
+      els.uploadPanel.hidden = true;
+      els.playPanel.hidden = false;
+      els.form.hidden = false;
+      renderQuestion();
+    } finally {
+      els.startBtn.disabled = false;
     }
-    state.questions = questions;
-    state.index = 0;
-    state.score = 0;
-    els.uploadPanel.hidden = true;
-    els.playPanel.hidden = false;
-    renderQuestion();
+  }
+
+  function showResult() {
+    const total = state.questions.length;
+    els.prompt.textContent = "퀴즈 완료";
+    els.sentence.textContent = `${state.score} / ${total}`;
+    els.form.hidden = true;
+    els.feedback.hidden = false;
+    els.feedback.textContent =
+      state.score === total ? "전부 맞았습니다. 스펠링이 몸에 익었습니다." : "틀린 단어는 목록을 보고 한 번 더 써 보세요.";
+    els.nextBtn.textContent = "사진부터 다시";
+    els.nextBtn.hidden = false;
+    els.nextBtn.dataset.done = "1";
+    setProgress("완료", 1);
   }
 
   function nextQuestion() {
     if (state.index >= state.questions.length - 1) {
-      const total = state.questions.length;
-      els.sentence.textContent = `${state.score} / ${total}`;
-      els.prompt.textContent = "퀴즈 완료";
-      els.options.innerHTML = "";
-      els.feedback.hidden = false;
-      els.feedback.textContent =
-        state.score === total
-          ? "전부 맞았습니다. 같은 사진으로 한 번 더 해도 좋습니다."
-          : "틀린 문장은 텍스트를 다시 보고 한 번 더 풀어 보세요.";
-      els.nextBtn.textContent = "사진부터 다시";
-      els.nextBtn.hidden = false;
-      els.nextBtn.dataset.done = "1";
-      setProgress("완료", 1);
+      showResult();
       return;
     }
     els.nextBtn.dataset.done = "";
     state.index += 1;
     renderQuestion();
+  }
+
+  function resetUpload() {
+    els.uploadPanel.hidden = false;
+    els.playPanel.hidden = true;
+    els.text.value = "";
+    els.preview.hidden = true;
+    els.ocrStatus.textContent = "아직 사진을 올리지 않았습니다.";
+    setProgress("사진 올리기", 0);
+    els.nextBtn.dataset.done = "";
+    if (state.previewUrl) {
+      URL.revokeObjectURL(state.previewUrl);
+      state.previewUrl = "";
+    }
   }
 
   function open() {
@@ -312,6 +401,7 @@
   });
 
   els.startBtn.addEventListener("click", startQuiz);
+  els.form.addEventListener("submit", checkAnswer);
   els.nextBtn.addEventListener("click", () => {
     if (els.nextBtn.dataset.done === "1") {
       resetUpload();

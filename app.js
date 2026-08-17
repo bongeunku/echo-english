@@ -476,8 +476,8 @@
     quizBtn.innerHTML = `
       <span class="emoji" aria-hidden="true">📷</span>
       <h3>이미지 퀴즈</h3>
-      <p>영어 텍스트 사진을 올리면 빈칸 퀴즈로 만듭니다</p>
-      <div class="meta">사진 업로드 · 객관식</div>
+      <p>영어 텍스트 사진을 올리면 한국어 뜻 보고 스펠링을 씁니다</p>
+      <div class="meta">사진 업로드 · 주관식</div>
     `;
     quizBtn.addEventListener("click", () => {
       stopAllListen();

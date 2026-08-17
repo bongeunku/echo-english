@@ -681,6 +681,28 @@ main {
   color: var(--ink);
 }
 
+.quiz-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 0.3rem 0 1rem;
+}
+
+.quiz-answer {
+  flex: 1 1 220px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.9rem 1rem;
+  font: inherit;
+  font-size: 1.15rem;
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.quiz-answer:disabled {
+  opacity: 0.75;
+}
+
 .quiz-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
