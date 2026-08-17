@@ -1,47 +1,68 @@
 (() => {
+  const STORAGE_KEY = "echo-quiz-list-v1";
+
+  const MEANINGS = {
+    apart: "떨어져, 따로",
+    "break up": "부수다, 부서지다",
+    continent: "대륙",
+    glacier: "빙하",
+    icy: "얼음같이 찬, 얼음에 뒤덮인",
+    "in the past": "옛날에, 과거에",
+    join: "연결하다, 합치다",
+    large: "큰, 대형의",
+    "little bit": "조금, 약간",
+    pangaea: "판게아(모든 대륙이 붙어 있던 초대륙)",
+    piece: "부분, 조각",
+    still: "아직도, 여전히",
+    apple: "사과",
+    thank: "고맙다",
+    "thank you": "고맙습니다",
+  };
+
+  const SKIP_HEADINGS = /^(part\s*\d+|unit\s*\d+|day\s*\d+|단어|vocabulary|words?|quiz)$/i;
+
   const els = {
     view: document.getElementById("quiz-view"),
     progressText: document.getElementById("quiz-progress-text"),
     progressFill: document.getElementById("quiz-progress-fill"),
-    uploadPanel: document.getElementById("quiz-upload-panel"),
+    setupPanel: document.getElementById("quiz-setup-panel"),
     playPanel: document.getElementById("quiz-play-panel"),
-    dropzone: document.getElementById("quiz-dropzone"),
-    file: document.getElementById("quiz-file"),
-    preview: document.getElementById("quiz-preview"),
-    ocrStatus: document.getElementById("quiz-ocr-status"),
+    hint: document.getElementById("quiz-setup-hint"),
     text: document.getElementById("quiz-text"),
+    sampleBtn: document.getElementById("quiz-sample-btn"),
     startBtn: document.getElementById("quiz-start-btn"),
     prompt: document.getElementById("quiz-prompt"),
     sentence: document.getElementById("quiz-sentence"),
+    listenBtn: document.getElementById("quiz-listen-btn"),
     form: document.getElementById("quiz-form"),
     answer: document.getElementById("quiz-answer"),
     checkBtn: document.getElementById("quiz-check-btn"),
     feedback: document.getElementById("quiz-feedback"),
     nextBtn: document.getElementById("quiz-next-btn"),
+    missList: document.getElementById("quiz-miss-list"),
   };
+
+  const SAMPLE = `apart
+break up
+continent
+glacier
+icy
+in the past
+join
+large
+little bit
+Pangaea
+piece
+still`;
 
   const state = {
     questions: [],
     index: 0,
     score: 0,
     answered: false,
-    previewUrl: "",
+    audio: null,
+    misses: [],
   };
-
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      if (window.Tesseract) {
-        resolve();
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = src;
-      script.async = true;
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("OCR 스크립트를 불러오지 못했습니다."));
-      document.head.appendChild(script);
-    });
-  }
 
   function setProgress(label, ratio) {
     els.progressText.textContent = label;
@@ -57,241 +78,212 @@
       .trim();
   }
 
-  function cleanEnglish(text) {
-    return (text || "")
-      .replace(/[가-힣]+/g, " ")
-      .replace(/[|\[\]{}<>~^_=+*#@]/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/^[\s.,;:!?-]+|[\s.,;:]+$/g, "")
-      .trim();
-  }
-
   function extractHangul(text) {
-    const parts = (text || "").match(/[가-힣]+(?:\s+[가-힣]+)*/g);
-    return parts ? parts.join(" ").trim() : "";
+    const parts = (text || "").match(/[가-힣]+(?:\s*[·,/]?\s*[가-힣]+)*/g);
+    return parts ? parts.join(", ").replace(/\s+,/g, ",").trim() : "";
   }
 
-  function mergeNumberLines(lines) {
-    const merged = [];
-    for (let i = 0; i < lines.length; i += 1) {
-      const line = lines[i];
-      const next = lines[i + 1];
-      if (/^(?:\d+|[IlO|])[.)]?$/.test(line) && next && /[A-Za-z가-힣]/.test(next)) {
-        merged.push(`${line} ${next}`);
-        i += 1;
-      } else {
-        merged.push(line);
+  function lookupMeaning(en) {
+    return MEANINGS[normalizeAnswer(en)] || "";
+  }
+
+  function takeVocab(text) {
+    const cleaned = (text || "")
+      .replace(/[가-힣]+/g, " ")
+      .replace(/[*_]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    const kept = [];
+    for (const word of words) {
+      const plain = word.replace(/[.,:;!?]+$/g, "");
+      if (!/^[A-Za-z][A-Za-z'-]*$/.test(plain)) {
+        if (kept.length) break;
+        continue;
       }
+      kept.push(plain);
+      if (kept.length >= 4) break;
     }
-    return merged;
+    return kept.join(" ");
   }
 
-  function parseNumberedItems(rawText) {
-    const lines = mergeNumberLines(
-      (rawText || "")
-        .split(/\n+/)
-        .map((line) => line.replace(/[|]/g, "1").trim())
-        .filter(Boolean)
-    );
+  function parseLine(line) {
+    const trimmed = line.trim();
+    if (!trimmed || SKIP_HEADINGS.test(trimmed)) return null;
+
+    const numbered = trimmed.match(/^\s*(\d{1,2})[.):\-]?\s+(.+)$/);
+    if (numbered) {
+      const body = numbered[2];
+      const ko = extractHangul(body);
+      const en = takeVocab(body.replace(/[가-힣·,/]+/g, " "));
+      if (en) return { en, ko };
+    }
+
+    const dash = trimmed.match(/^([A-Za-z][A-Za-z' -]{1,40})\s*[-–—]\s*(.+)$/);
+    if (dash) {
+      return { en: takeVocab(dash[1]), ko: extractHangul(dash[2]) };
+    }
+
+    const ko = extractHangul(trimmed);
+    const en = takeVocab(trimmed.replace(/[가-힣·,/]+/g, " "));
+    if (en) return { en, ko };
+    return null;
+  }
+
+  function parseWordList(rawText) {
     const items = [];
     const seen = new Set();
-
-    lines.forEach((line) => {
-      const match = line.match(/^\s*(?:\d+|[IlO])[.)\-:]{0,2}\s+(.+)$/);
-      if (!match) return;
-      const rest = match[1].trim();
-      const en = cleanEnglish(rest);
-      const ko = extractHangul(rest);
-      const key = normalizeAnswer(en);
-      if (!/[a-z]/i.test(en) || key.length < 2 || seen.has(key)) return;
-      seen.add(key);
-      items.push({ en, ko });
-    });
-
-    if (items.length) return items;
-
-    const inline = [...(rawText || "").matchAll(/(?:^|\s)(?:\d+|[IlO])[.)\-]{0,2}\s*([A-Za-z][A-Za-z'’\s-]{1,40})/g)];
-    inline.forEach((match) => {
-      const en = cleanEnglish(match[1]);
-      const key = normalizeAnswer(en);
-      if (!/[a-z]/i.test(en) || key.length < 2 || seen.has(key)) return;
-      seen.add(key);
-      items.push({ en, ko: "" });
-    });
-
-    if (items.length) return items;
-
     (rawText || "")
       .split(/\n+/)
-      .map((line) => cleanEnglish(line))
-      .filter((en) => /[a-z]/i.test(en) && en.split(" ").length <= 8)
-      .forEach((en) => {
-        const key = normalizeAnswer(en);
-        if (key.length < 2 || seen.has(key)) return;
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const item = parseLine(line);
+        if (!item) return;
+        const key = normalizeAnswer(item.en);
+        if (!key || key.length < 2 || seen.has(key)) return;
         seen.add(key);
-        items.push({ en, ko: "" });
+        items.push(item);
       });
-
     return items;
   }
 
-  function formatItemList(items) {
-    return items.map((item, index) => `${index + 1}. ${item.en}${item.ko ? `  ${item.ko}` : ""}`).join("\n");
+  function stopSpeech() {
+    window.speechSynthesis.cancel();
+    if (state.audio) {
+      state.audio.onended = null;
+      state.audio.pause();
+      state.audio.src = "";
+      state.audio = null;
+    }
   }
 
-  async function translateEnToKo(text) {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|ko`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("translate failed");
-    const data = await res.json();
-    const translated = (data?.responseData?.translatedText || "").trim();
-    if (!translated || /error|invalid/i.test(translated)) return "";
-    return translated;
-  }
-
-  function loadImage(src) {
-    return new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("이미지를 열 수 없습니다."));
-      image.src = src;
+  function speakLocal(text, lang) {
+    return new Promise((resolve) => {
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = lang || "en-US";
+      utter.rate = lang === "ko-KR" ? 0.95 : 0.92;
+      const voices = window.speechSynthesis.getVoices();
+      const preferred =
+        lang === "ko-KR"
+          ? voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang) && /Google|Neural|Heami|Yuna|SunHi|InJoon/i.test(v.name)) ||
+            voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang))
+          : voices.find((v) => /en-US/i.test(v.lang) && /Google|Neural|Aria|Jenny|Ava|Samantha/i.test(v.name)) ||
+            voices.find((v) => /en-US/i.test(v.lang)) ||
+            voices.find((v) => /^en/i.test(v.lang));
+      if (preferred) utter.voice = preferred;
+      utter.onend = () => resolve();
+      utter.onerror = () => resolve();
+      window.speechSynthesis.speak(utter);
     });
   }
 
-  async function preprocessImage(file) {
-    const src = URL.createObjectURL(file);
-    try {
-      const image = await loadImage(src);
-      const scale = Math.max(2.2, 1800 / Math.max(image.width, 1));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(image.width * scale);
-      canvas.height = Math.round(image.height * scale);
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "#fff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = pixels.data;
-      let total = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-        data[i] = data[i + 1] = data[i + 2] = gray;
-        total += gray;
-      }
-      const avg = total / (data.length / 4);
-      const threshold = Math.max(140, Math.min(200, avg * 0.9));
-      for (let i = 0; i < data.length; i += 4) {
-        const value = data[i] > threshold ? 255 : 0;
-        data[i] = data[i + 1] = data[i + 2] = value;
-      }
-      ctx.putImageData(pixels, 0, 0);
-      return await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    } finally {
-      URL.revokeObjectURL(src);
-    }
+  function koreanForSpeech(text) {
+    return (text || "")
+      .replace(/\(.*?\)/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  async function runOcr(blob, Tesseract, logger) {
-    const worker = await Tesseract.createWorker("eng", 1, { logger });
-    try {
-      await worker.setParameters({
-        tessedit_pageseg_mode: "6",
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?'’-:",
-      });
-      const first = await worker.recognize(blob);
-      await worker.setParameters({ tessedit_pageseg_mode: "4" });
-      const second = await worker.recognize(blob);
-      const a = first?.data?.text || "";
-      const b = second?.data?.text || "";
-      return parseNumberedItems(a).length >= parseNumberedItems(b).length ? a : b;
-    } finally {
-      await worker.terminate();
-    }
+  function wordSlug(text) {
+    return normalizeAnswer(text).replace(/\s+/g, "-");
   }
 
-  async function recognizeImage(file) {
-    els.ocrStatus.textContent = "사진을 선명하게 만든 뒤 숫자를 기준으로 읽고 있습니다…";
-    setProgress("글자 인식 중", 0.1);
-    await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
-    const blob = await preprocessImage(file);
-    const raw = await runOcr(blob, window.Tesseract, (info) => {
-      if (info.status === "recognizing text" && info.progress) {
-        setProgress("글자 인식 중", 0.15 + info.progress * 0.7);
-        els.ocrStatus.textContent = `번호 옆 영어를 읽는 중… ${Math.round(info.progress * 100)}%`;
-      }
+  function quizAudioUrl(text) {
+    return `audio/quiz/${wordSlug(text)}.mp3`;
+  }
+
+  function playAudioFile(url) {
+    return new Promise((resolve) => {
+      const audio = new Audio(url);
+      state.audio = audio;
+      audio.onended = () => resolve(true);
+      audio.onerror = () => resolve(false);
+      audio.play().then(() => {}).catch(() => resolve(false));
     });
-    const items = parseNumberedItems(raw);
-    els.text.value = items.length ? formatItemList(items) : (raw || "").trim();
-    if (!items.length) {
-      els.ocrStatus.textContent =
-        "번호 옆 영어를 잘 못 읽었습니다. 아래 목록을 1. apple 형식으로 직접 고친 뒤 퀴즈를 시작하세요.";
-      setProgress("직접 수정 필요", 0.4);
-      return;
-    }
-    els.ocrStatus.textContent = `${items.length}개를 찾았습니다. 틀린 줄만 고친 뒤 퀴즈를 시작하세요.`;
-    setProgress("퀴즈 준비", 1);
   }
 
-  async function handleFile(file) {
-    if (!file || !file.type.startsWith("image/")) {
-      els.ocrStatus.textContent = "이미지 파일만 올릴 수 있습니다.";
-      return;
-    }
-    if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-    state.previewUrl = URL.createObjectURL(file);
-    els.preview.src = state.previewUrl;
-    els.preview.hidden = false;
+  async function speakWord(text) {
+    stopSpeech();
+    const played = await playAudioFile(quizAudioUrl(text));
+    if (played) return;
+
     try {
-      await recognizeImage(file);
-    } catch (err) {
-      els.ocrStatus.textContent = err.message || "글자 인식에 실패했습니다. 인터넷 연결을 확인해 주세요.";
+      const res = await fetch(
+        `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent("en-US-JennyNeural")}&speed=1`
+      );
+      if (res.ok && (res.headers.get("content-type") || "").includes("audio")) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        state.audio = audio;
+        await audio.play();
+        await new Promise((resolve) => {
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+          };
+        });
+        return;
+      }
+    } catch {
+      /* ignore */
     }
+
+    await speakLocal(text, "en-US");
   }
 
-  async function buildQuestions(rawText) {
-    const items = parseNumberedItems(rawText).slice(0, 12);
-    const questions = [];
-    for (let i = 0; i < items.length; i += 1) {
-      const item = items[i];
-      setProgress(`뜻 만드는 중 ${i + 1}/${items.length}`, (i + 1) / items.length);
-      els.ocrStatus.textContent = `한국어 문제를 만드는 중… ${i + 1}/${items.length}`;
-      let ko = item.ko;
-      if (!ko) {
-        try {
-          ko = await translateEnToKo(item.en);
-        } catch {
-          ko = "";
-        }
-      }
-      questions.push({
-        prompt: ko || item.en,
+  function speakKorean(text) {
+    stopSpeech();
+    const spoken = koreanForSpeech(text);
+    if (!spoken) return Promise.resolve();
+    return speakLocal(spoken, "ko-KR");
+  }
+
+  function resetAnswerStyle() {
+    els.answer.classList.remove("wrong", "correct");
+  }
+
+  function buildQuestions(rawText) {
+    return parseWordList(rawText).slice(0, 30).map((item) => {
+      const ko = item.ko || lookupMeaning(item.en);
+      return {
+        prompt: ko || `${item.en}의 스펠링`,
         answer: item.en,
         translated: Boolean(ko),
-      });
-    }
-    return questions;
+      };
+    });
   }
 
   function renderQuestion() {
     const item = state.questions[state.index];
     if (!item) return;
+    stopSpeech();
     state.answered = false;
     els.prompt.textContent = item.translated
       ? "다음 뜻의 영어 스펠링을 쓰세요"
-      : "다음 영어를 보고 스펠링을 그대로 쓰세요";
+      : "다음 영어의 스펠링을 쓰세요";
     els.sentence.textContent = item.prompt;
     els.feedback.hidden = true;
+    if (els.missList) {
+      els.missList.hidden = true;
+      els.missList.innerHTML = "";
+    }
     els.nextBtn.hidden = true;
     els.nextBtn.textContent = state.index >= state.questions.length - 1 ? "결과 보기" : "다음";
     els.answer.disabled = false;
     els.checkBtn.disabled = false;
     els.answer.value = "";
+    resetAnswerStyle();
     els.form.hidden = false;
+    if (els.listenBtn) els.listenBtn.hidden = false;
     setProgress(`${state.index + 1} / ${state.questions.length}`, (state.index + 1) / state.questions.length);
     window.setTimeout(() => els.answer.focus(), 50);
+    speakKorean(item.prompt);
   }
 
   function checkAnswer(event) {
@@ -307,43 +299,80 @@
     }
     state.answered = true;
     const correct = normalizeAnswer(typed) === normalizeAnswer(item.answer);
-    if (correct) state.score += 1;
+    if (correct) {
+      state.score += 1;
+    } else {
+      state.misses.push({
+        prompt: item.prompt,
+        answer: item.answer,
+        typed,
+      });
+    }
     els.answer.disabled = true;
     els.checkBtn.disabled = true;
+    els.answer.classList.toggle("correct", correct);
+    els.answer.classList.toggle("wrong", !correct);
     els.feedback.hidden = false;
-    els.feedback.textContent = correct ? "정답입니다." : `오답입니다. 정답은 ${item.answer}`;
+    if (correct) {
+      els.feedback.innerHTML = `정답입니다. (<strong>${item.answer}</strong>)`;
+    } else {
+      els.feedback.innerHTML = `오답입니다. 입력: <span class="quiz-wrong-spell">${typed}</span> · 정답: <strong>${item.answer}</strong>`;
+    }
     els.nextBtn.hidden = false;
+    speakWord(item.answer);
   }
 
-  async function startQuiz() {
-    els.startBtn.disabled = true;
-    try {
-      const questions = await buildQuestions(els.text.value);
-      if (questions.length < 1) {
-        els.ocrStatus.textContent = "목록이 비었습니다. 1. apple 형식으로 영어를 적어 주세요.";
-        return;
-      }
-      state.questions = questions;
-      state.index = 0;
-      state.score = 0;
-      els.uploadPanel.hidden = true;
-      els.playPanel.hidden = false;
-      els.form.hidden = false;
-      renderQuestion();
-    } finally {
-      els.startBtn.disabled = false;
+  function startQuiz() {
+    const raw = els.text.value.trim();
+    if (!raw) {
+      if (els.hint) els.hint.textContent = "단어 목록을 입력하거나 예시를 불러와 주세요.";
+      return;
     }
+    localStorage.setItem(STORAGE_KEY, raw);
+    const questions = buildQuestions(raw);
+    if (questions.length < 1) {
+      if (els.hint) {
+        els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
+      }
+      setProgress("입력 확인", 0);
+      return;
+    }
+    state.questions = questions;
+    state.index = 0;
+    state.score = 0;
+    state.misses = [];
+    els.setupPanel.hidden = true;
+    els.playPanel.hidden = false;
+    renderQuestion();
   }
 
   function showResult() {
+    stopSpeech();
     const total = state.questions.length;
     els.prompt.textContent = "퀴즈 완료";
     els.sentence.textContent = `${state.score} / ${total}`;
     els.form.hidden = true;
+    if (els.listenBtn) els.listenBtn.hidden = true;
     els.feedback.hidden = false;
-    els.feedback.textContent =
-      state.score === total ? "전부 맞았습니다. 스펠링이 몸에 익었습니다." : "틀린 단어는 목록을 보고 한 번 더 써 보세요.";
-    els.nextBtn.textContent = "사진부터 다시";
+    if (state.score === total) {
+      els.feedback.textContent = "전부 맞았습니다. 스펠링이 몸에 익었습니다.";
+      if (els.missList) {
+        els.missList.hidden = true;
+        els.missList.innerHTML = "";
+      }
+    } else {
+      els.feedback.textContent = `틀린 단어 ${state.misses.length}개입니다.`;
+      if (els.missList) {
+        els.missList.hidden = false;
+        els.missList.innerHTML = state.misses
+          .map(
+            (miss) =>
+              `<li><span class="quiz-miss-ko">${miss.prompt}</span> · 입력 <span class="quiz-wrong-spell">${miss.typed}</span> → 정답 <strong>${miss.answer}</strong></li>`
+          )
+          .join("");
+      }
+    }
+    els.nextBtn.textContent = "목록 수정";
     els.nextBtn.hidden = false;
     els.nextBtn.dataset.done = "1";
     setProgress("완료", 1);
@@ -359,56 +388,48 @@
     renderQuestion();
   }
 
-  function resetUpload() {
-    els.uploadPanel.hidden = false;
+  function resetSetup() {
+    stopSpeech();
+    els.setupPanel.hidden = false;
     els.playPanel.hidden = true;
-    els.text.value = "";
-    els.preview.hidden = true;
-    els.ocrStatus.textContent = "아직 사진을 올리지 않았습니다.";
-    setProgress("사진 올리기", 0);
+    setProgress("목록 입력", 0);
     els.nextBtn.dataset.done = "";
-    if (state.previewUrl) {
-      URL.revokeObjectURL(state.previewUrl);
-      state.previewUrl = "";
+    if (els.hint) {
+      els.hint.textContent = "영어 단어만 한 줄에 하나씩 적어도 됩니다. Part 2 같은 제목은 자동으로 건너뜁니다.";
     }
   }
 
   function open() {
-    resetUpload();
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) els.text.value = saved;
+    resetSetup();
     els.view.hidden = false;
   }
 
-  els.file.addEventListener("change", () => {
-    const file = els.file.files && els.file.files[0];
-    if (file) handleFile(file);
-  });
-
-  ["dragenter", "dragover"].forEach((eventName) => {
-    els.dropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      els.dropzone.classList.add("dragover");
-    });
-  });
-  ["dragleave", "drop"].forEach((eventName) => {
-    els.dropzone.addEventListener(eventName, (event) => {
-      event.preventDefault();
-      els.dropzone.classList.remove("dragover");
-    });
-  });
-  els.dropzone.addEventListener("drop", (event) => {
-    const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-    if (file) handleFile(file);
+  els.sampleBtn.addEventListener("click", () => {
+    els.text.value = SAMPLE;
+    if (els.hint) els.hint.textContent = "예시 목록을 넣었습니다. 그대로 시작하거나 내 단어로 바꿔 주세요.";
   });
 
   els.startBtn.addEventListener("click", startQuiz);
   els.form.addEventListener("submit", checkAnswer);
   els.nextBtn.addEventListener("click", () => {
     if (els.nextBtn.dataset.done === "1") {
-      resetUpload();
+      resetSetup();
       return;
     }
     nextQuestion();
   });
+  if (els.listenBtn) {
+    els.listenBtn.addEventListener("click", () => {
+      const item = state.questions[state.index];
+      if (item) speakWord(item.answer);
+    });
+  }
 
-  window.EchoQuiz = { open };
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.getVoices();
+  }
+
+  window.EchoQuiz = { open, stop: stopSpeech };
 })();

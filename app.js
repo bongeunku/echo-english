@@ -475,9 +475,9 @@
     quizBtn.className = "topic quiz-card-btn";
     quizBtn.innerHTML = `
       <span class="emoji" aria-hidden="true">📷</span>
-      <h3>이미지 퀴즈</h3>
-      <p>영어 텍스트 사진을 올리면 한국어 뜻 보고 스펠링을 씁니다</p>
-      <div class="meta">사진 업로드 · 주관식</div>
+      <h3>스펠링 퀴즈</h3>
+      <p>단어 목록을 직접 입력하고 한국어 뜻 → 영어 스펠링 연습</p>
+      <div class="meta">직접 입력 · 주관식</div>
     `;
     quizBtn.addEventListener("click", () => {
       stopAllListen();
@@ -588,6 +588,7 @@
   const quizBackBtn = document.getElementById("quiz-back-btn");
   if (quizBackBtn) {
     quizBackBtn.addEventListener("click", () => {
+      if (window.EchoQuiz && window.EchoQuiz.stop) window.EchoQuiz.stop();
       showView("pick");
     });
   }
