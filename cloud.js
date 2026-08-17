@@ -5,12 +5,35 @@
     userId: null,
     ready: false,
     error: "",
+    provider: "",
+    userLabel: "",
   };
 
+  function redirectTo() {
+    const path = window.location.pathname.endsWith("/")
+      ? window.location.pathname
+      : window.location.pathname.replace(/[^/]+$/, "");
+    return `${window.location.origin}${path || "/"}`;
+  }
+
   function statusText() {
-    if (state.ready) return "클라우드 연결됨";
+    if (state.ready && state.provider === "github") {
+      return state.userLabel ? `공유 목록 · ${state.userLabel}` : "공유 목록 · GitHub";
+    }
+    if (state.ready) return "공유 목록 연결됨";
     if (state.error) return state.error;
     return "이 기기에만 저장";
+  }
+
+  function applyUser(user) {
+    state.userId = user && user.id;
+    state.provider = (user && user.app_metadata && user.app_metadata.provider) || "";
+    if (user && user.is_anonymous) state.provider = "anonymous";
+    const meta = (user && user.user_metadata) || {};
+    state.userLabel = meta.user_name || meta.preferred_username || meta.full_name || "";
+    state.ready = Boolean(state.userId);
+    state.error = state.ready ? "" : "로그인 실패";
+    return state.ready;
   }
 
   async function init() {
@@ -19,28 +42,55 @@
       return false;
     }
     try {
-      state.supabase = window.supabase.createClient(cfg.url, cfg.key);
+      state.supabase = window.supabase.createClient(cfg.url, cfg.key, {
+        auth: {
+          persistSession: true,
+          detectSessionInUrl: true,
+          flowType: "pkce",
+        },
+      });
       const existing = await state.supabase.auth.getSession();
-      if (!existing.data.session) {
-        const signed = await state.supabase.auth.signInAnonymously();
-        if (signed.error) {
-          state.error = "익명 로그인을 켜 주세요";
-          return false;
-        }
+      if (existing.data.session && existing.data.session.user) {
+        return applyUser(existing.data.session.user);
       }
-      const user = await state.supabase.auth.getUser();
-      state.userId = user.data.user && user.data.user.id;
-      if (!state.userId) {
-        state.error = "로그인 실패";
+      const signed = await state.supabase.auth.signInAnonymously();
+      if (signed.error) {
+        state.error = "GitHub로 로그인해 주세요";
         return false;
       }
-      state.ready = true;
-      state.error = "";
-      return true;
+      const user = signed.data.user || (await state.supabase.auth.getUser()).data.user;
+      return applyUser(user);
     } catch (err) {
       state.error = "클라우드 연결 실패";
       return false;
     }
+  }
+
+  async function signInWithGitHub() {
+    if (!state.supabase) {
+      const ok = await init();
+      if (!state.supabase) return ok;
+    }
+    const { error } = await state.supabase.auth.signInWithOAuth({
+      provider: "github",
+      options: { redirectTo: redirectTo() },
+    });
+    if (error) {
+      state.error = "GitHub 로그인을 켜 주세요";
+      return false;
+    }
+    return true;
+  }
+
+  async function signOut() {
+    if (!state.supabase) return;
+    await state.supabase.auth.signOut();
+    state.userId = null;
+    state.ready = false;
+    state.provider = "";
+    state.userLabel = "";
+    state.error = "";
+    return init();
   }
 
   function enKey(text) {
@@ -110,7 +160,7 @@
   async function upsertWord(word) {
     if (!state.ready) return false;
     const { error } = await state.supabase.from("vocab_words").upsert(rowFromWord(word), {
-      onConflict: "user_id,en_key",
+      onConflict: "en_key",
     });
     if (error) {
       state.error = "저장 실패";
@@ -122,7 +172,7 @@
   async function upsertWords(words) {
     if (!state.ready || !words.length) return false;
     const { error } = await state.supabase.from("vocab_words").upsert(words.map(rowFromWord), {
-      onConflict: "user_id,en_key",
+      onConflict: "en_key",
     });
     if (error) {
       state.error = "저장 실패";
@@ -135,11 +185,7 @@
     if (!state.ready || !words.length) return false;
     const keys = words.map((word) => enKey(word.en || word)).filter(Boolean);
     if (!keys.length) return false;
-    const { error } = await state.supabase
-      .from("vocab_words")
-      .delete()
-      .eq("user_id", state.userId)
-      .in("en_key", keys);
+    const { error } = await state.supabase.from("vocab_words").delete().in("en_key", keys);
     if (error) {
       state.error = "삭제 실패";
       return false;
@@ -149,6 +195,8 @@
 
   window.EchoCloud = {
     init,
+    signInWithGitHub,
+    signOut,
     countWords,
     pullWordsPage,
     upsertWord,
@@ -156,5 +204,6 @@
     deleteWords,
     statusText,
     isReady: () => state.ready,
+    isGitHub: () => state.provider === "github",
   };
 })();

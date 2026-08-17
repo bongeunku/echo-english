@@ -37,6 +37,8 @@
     loadBtn: document.getElementById("quiz-load-btn"),
     saveBtn: document.getElementById("quiz-save-btn"),
     deleteBtn: document.getElementById("quiz-delete-btn"),
+    githubBtn: document.getElementById("quiz-github-btn"),
+    logoutBtn: document.getElementById("quiz-logout-btn"),
     pager: document.getElementById("quiz-pager"),
     pageLabel: document.getElementById("quiz-page-label"),
     prevPageBtn: document.getElementById("quiz-prev-page-btn"),
@@ -272,6 +274,8 @@
     state.total = count;
     const cloud = window.EchoCloud ? window.EchoCloud.statusText() : "이 기기에만 저장";
     els.memoryStatus.textContent = `저장된 단어 ${count}개 · ${cloud}`;
+    if (els.githubBtn) els.githubBtn.hidden = Boolean(window.EchoCloud && window.EchoCloud.isGitHub && window.EchoCloud.isGitHub());
+    if (els.logoutBtn) els.logoutBtn.hidden = !(window.EchoCloud && window.EchoCloud.isGitHub && window.EchoCloud.isGitHub());
     updatePager();
   }
 
@@ -916,7 +920,7 @@
     els.nextBtn.dataset.done = "";
     if (els.hint) {
       els.hint.textContent =
-        "왼쪽에서 단어를 저장·삭제하고, 오른쪽에서 불러온 뒤 퀴즈 종류를 고르세요. 둘 다 주관식입니다.";
+        "GitHub로 로그인하면 다른 컴퓨터에서도 같은 단어 목록을 씁니다. 저장한 단어는 모든 사용자가 이용합니다.";
     }
     updateMemoryStatus();
   }
@@ -944,6 +948,21 @@
   }
   if (els.saveBtn) els.saveBtn.addEventListener("click", saveCurrentList);
   if (els.deleteBtn) els.deleteBtn.addEventListener("click", deleteCurrentList);
+  if (els.githubBtn) {
+    els.githubBtn.addEventListener("click", async () => {
+      if (!window.EchoCloud || !window.EchoCloud.signInWithGitHub) return;
+      const ok = await window.EchoCloud.signInWithGitHub();
+      if (!ok && els.hint) els.hint.textContent = window.EchoCloud.statusText();
+    });
+  }
+  if (els.logoutBtn) {
+    els.logoutBtn.addEventListener("click", async () => {
+      if (!window.EchoCloud || !window.EchoCloud.signOut) return;
+      await window.EchoCloud.signOut();
+      await updateMemoryStatus();
+      await loadWordPage(0, false);
+    });
+  }
   if (els.startKoBtn) els.startKoBtn.addEventListener("click", () => startQuiz("ko"));
   if (els.startEnBtn) els.startEnBtn.addEventListener("click", () => startQuiz("en"));
   if (els.startBtn) els.startBtn.addEventListener("click", () => startQuiz("ko"));

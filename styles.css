@@ -213,6 +213,10 @@ main {
   justify-content: center;
 }
 
+.quiz-auth-row {
+  margin: 0.35rem 0 0.4rem;
+}
+
 .quiz-mode-note {
   margin: 0.35rem 0 0;
   color: var(--muted);
