@@ -6,6 +6,7 @@
     home: document.getElementById("home-view"),
     pick: document.getElementById("pick-view"),
     practice: document.getElementById("practice-view"),
+    quiz: document.getElementById("quiz-view"),
     done: document.getElementById("done-view"),
   };
 
@@ -468,6 +469,24 @@
     `;
     allBtn.addEventListener("click", () => openAllListen(0));
     els.topicGrid.appendChild(allBtn);
+
+    const quizBtn = document.createElement("button");
+    quizBtn.type = "button";
+    quizBtn.className = "topic quiz-card-btn";
+    quizBtn.innerHTML = `
+      <span class="emoji" aria-hidden="true">📷</span>
+      <h3>이미지 퀴즈</h3>
+      <p>영어 텍스트 사진을 올리면 빈칸 퀴즈로 만듭니다</p>
+      <div class="meta">사진 업로드 · 객관식</div>
+    `;
+    quizBtn.addEventListener("click", () => {
+      stopAllListen();
+      stopSpeech();
+      stopRecognition();
+      showView("quiz");
+      if (window.EchoQuiz) window.EchoQuiz.open();
+    });
+    els.topicGrid.appendChild(quizBtn);
   }
 
   function syncContinueButton() {
@@ -566,7 +585,12 @@
     });
   }
 
-  restoreVoiceChoice();
+  const quizBackBtn = document.getElementById("quiz-back-btn");
+  if (quizBackBtn) {
+    quizBackBtn.addEventListener("click", () => {
+      showView("pick");
+    });
+  }
   renderTopics();
   syncContinueButton();
   showView("home");
