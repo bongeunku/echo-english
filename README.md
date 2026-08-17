@@ -4,9 +4,7 @@
 
 ## 웹에서 바로 쓰기
 
-배포 후 주소 예:
-
-`https://<username>.github.io/echo-english/`
+https://bongeunku.github.io/echo-english/
 
 ## 로컬에서 실행
 
