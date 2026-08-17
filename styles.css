@@ -355,6 +355,13 @@ main {
   font-weight: 600;
 }
 
+.topic.listen-all {
+  border-color: rgba(15, 122, 108, 0.35);
+  background:
+    linear-gradient(180deg, rgba(15, 122, 108, 0.1), rgba(255, 255, 255, 0.62)),
+    var(--surface);
+}
+
 .practice-bar {
   display: grid;
   grid-template-columns: auto 1fr auto;

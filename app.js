@@ -35,6 +35,7 @@
     homeBtn: document.getElementById("home-btn"),
     doneSummary: document.getElementById("done-summary"),
     voiceNote: document.getElementById("voice-note"),
+    pauseAllBtn: document.getElementById("pause-all-btn"),
   };
 
   const state = {
@@ -45,6 +46,11 @@
     listening: false,
     recognition: null,
     audio: null,
+    mode: "topic",
+    playlist: [],
+    playToken: 0,
+    allListenPlaying: false,
+    speakDone: null,
   };
 
   function loadProgress() {
@@ -66,7 +72,26 @@
     });
   }
 
+  function buildPlaylist() {
+    return window.ECHO_TOPICS.flatMap((topic) =>
+      topic.lines.map((line, index) => ({
+        en: line.en,
+        ko: line.ko,
+        topicId: topic.id,
+        topicTitle: topic.title,
+        audioIndex: index,
+      }))
+    );
+  }
+
   function currentTopic() {
+    if (state.mode === "all") {
+      return {
+        id: "all",
+        title: "전체 듣기",
+        lines: state.playlist,
+      };
+    }
     return window.ECHO_TOPICS.find((t) => t.id === state.topicId);
   }
 
@@ -90,6 +115,29 @@
       state.audio = null;
     }
     state.speaking = false;
+    const done = state.speakDone;
+    state.speakDone = null;
+    if (done) done("stopped");
+  }
+
+  function stopAllListen() {
+    state.playToken += 1;
+    state.allListenPlaying = false;
+    if (els.pauseAllBtn) {
+      els.pauseAllBtn.textContent = "이어 듣기";
+    }
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  function setAllListenUi(visible) {
+    if (!els.pauseAllBtn) return;
+    els.pauseAllBtn.hidden = !visible;
+    els.pauseAllBtn.textContent = state.allListenPlaying ? "일시정지" : "이어 듣기";
   }
 
   function stopRecognition() {
@@ -108,10 +156,12 @@
   }
 
   function currentAudioUrl() {
-    const topic = currentTopic();
+    const line = currentLine();
     const voice = els.voice?.value || "en-US-AvaNeural";
-    if (!topic) return "";
-    return `audio/${voice}/${topic.id}-${state.index}.mp3`;
+    if (!line) return "";
+    const topicId = line.topicId || state.topicId;
+    const index = line.audioIndex ?? state.index;
+    return `audio/${voice}/${topicId}-${index}.mp3`;
   }
 
   function speak(text) {
@@ -124,6 +174,10 @@
       audio.preservesPitch = true;
       state.audio = audio;
       state.speaking = true;
+      state.speakDone = (result) => {
+        if (result === "error") reject(new Error("audio missing"));
+        else resolve();
+      };
       if (els.voiceNote) {
         const label = els.voice?.selectedOptions?.[0]?.text || "미국 음성";
         els.voiceNote.textContent = `${label} · 자연 발음 재생`;
@@ -132,7 +186,9 @@
       audio.onended = () => {
         state.speaking = false;
         state.audio = null;
-        resolve();
+        const done = state.speakDone;
+        state.speakDone = null;
+        if (done) done("ok");
       };
       audio.onerror = () => {
         state.speaking = false;
@@ -140,11 +196,14 @@
         if (els.voiceNote) {
           els.voiceNote.textContent = "음성 파일을 찾지 못했습니다. 페이지를 새로고침해 주세요.";
         }
-        reject(new Error("audio missing"));
+        const done = state.speakDone;
+        state.speakDone = null;
+        if (done) done("error");
       };
       audio.play().catch((err) => {
         state.speaking = false;
         state.audio = null;
+        state.speakDone = null;
         reject(err);
       });
     });
@@ -236,7 +295,10 @@
     els.koText.textContent = line.ko;
     els.enText.textContent = line.en;
     els.enText.classList.toggle("hidden-en", state.hideEnglish);
-    els.hintText.textContent = "먼저 듣고, 같은 리듬으로 따라 말하세요.";
+    els.hintText.textContent =
+      state.mode === "all"
+        ? `${line.topicTitle} · 일상부터 스몰톡까지 이어서 들려줍니다`
+        : "먼저 듣고, 같은 리듬으로 따라 말하세요.";
     els.transcript.hidden = true;
     els.micStatus.hidden = true;
     setPhase("READY");
@@ -245,17 +307,70 @@
   }
 
   function openTopic(topicId, index = 0) {
+    stopAllListen();
     stopSpeech();
     stopRecognition();
+    state.mode = "topic";
     state.topicId = topicId;
     state.index = index;
     showView("practice");
+    setAllListenUi(false);
     renderLine();
+  }
+
+  function openAllListen(index = 0) {
+    stopAllListen();
+    stopSpeech();
+    stopRecognition();
+    state.mode = "all";
+    state.playlist = buildPlaylist();
+    state.topicId = "all";
+    state.index = index;
+    showView("practice");
+    setAllListenUi(true);
+    renderLine();
+    startAllListen();
+  }
+
+  async function startAllListen() {
+    const token = (state.playToken += 1);
+    state.allListenPlaying = true;
+    setAllListenUi(true);
+    setPhase("LISTEN");
+
+    for (let i = state.index; i < state.playlist.length; i += 1) {
+      if (token !== state.playToken) return;
+      state.index = i;
+      renderLine();
+      setPhase("LISTEN");
+      els.hintText.textContent = `${currentLine().topicTitle} · 전체 듣기 재생 중`;
+      try {
+        await speak(currentLine().en);
+      } catch {
+        if (token === state.playToken) {
+          stopAllListen();
+          setPhase("READY");
+        }
+        return;
+      }
+      if (token !== state.playToken) return;
+      await delay(700);
+    }
+
+    if (token !== state.playToken) return;
+    stopAllListen();
+    saveProgress({ topicId: "all", index: 0, completedAt: Date.now() });
+    els.doneSummary.textContent = `일상 대화부터 스몰톡까지 ${state.playlist.length}문장 듣기를 마쳤습니다.`;
+    showView("done");
   }
 
   async function handleListen() {
     const line = currentLine();
     if (!line || state.speaking) return;
+    if (state.mode === "all") {
+      stopAllListen();
+      setAllListenUi(true);
+    }
     stopRecognition();
     setPhase("LISTEN");
     els.hintText.textContent = "귀로만 집중해서 들어보세요.";
@@ -266,12 +381,19 @@
       return;
     }
     setPhase("READY");
-    els.hintText.textContent = "이제 ‘따라하기’를 눌러 같은 문장을 말해 보세요.";
+    els.hintText.textContent =
+      state.mode === "all"
+        ? "이어 듣기를 누르면 다음 문장부터 다시 재생됩니다."
+        : "이제 ‘따라하기’를 눌러 같은 문장을 말해 보세요.";
   }
 
   async function handleEcho() {
     const line = currentLine();
     if (!line || state.speaking) return;
+    if (state.mode === "all") {
+      stopAllListen();
+      setAllListenUi(true);
+    }
     stopRecognition();
     setPhase("LISTEN");
     els.hintText.textContent = "듣고…";
@@ -289,6 +411,21 @@
   function handleNext() {
     const topic = currentTopic();
     if (!topic) return;
+    if (state.mode === "all") {
+      stopAllListen();
+      stopSpeech();
+      stopRecognition();
+      if (state.index >= state.playlist.length - 1) {
+        saveProgress({ topicId: "all", index: 0, completedAt: Date.now() });
+        els.doneSummary.textContent = `일상 대화부터 스몰톡까지 ${state.playlist.length}문장 듣기를 마쳤습니다.`;
+        showView("done");
+        return;
+      }
+      state.index += 1;
+      renderLine();
+      startAllListen();
+      return;
+    }
     stopSpeech();
     stopRecognition();
 
@@ -318,10 +455,28 @@
       btn.addEventListener("click", () => openTopic(topic.id, 0));
       els.topicGrid.appendChild(btn);
     });
+
+    const allCount = window.ECHO_TOPICS.reduce((sum, topic) => sum + topic.lines.length, 0);
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "topic listen-all";
+    allBtn.innerHTML = `
+      <span class="emoji" aria-hidden="true">🎧</span>
+      <h3>전체 듣기</h3>
+      <p>일상 대화부터 스몰톡까지 이어서 듣기</p>
+      <div class="meta">${allCount}문장 · 자동 재생</div>
+    `;
+    allBtn.addEventListener("click", () => openAllListen(0));
+    els.topicGrid.appendChild(allBtn);
   }
 
   function syncContinueButton() {
     const progress = loadProgress();
+    if (progress.topicId === "all") {
+      els.continueBtn.hidden = false;
+      els.continueBtn.textContent = "이어서: 전체 듣기";
+      return;
+    }
     const topic = window.ECHO_TOPICS.find((t) => t.id === progress.topicId);
     if (!topic) {
       els.continueBtn.hidden = true;
@@ -345,10 +500,15 @@
 
   els.continueBtn.addEventListener("click", () => {
     const progress = loadProgress();
+    if (progress.topicId === "all") {
+      openAllListen(progress.index || 0);
+      return;
+    }
     if (progress.topicId) openTopic(progress.topicId, progress.index || 0);
   });
 
   els.backBtn.addEventListener("click", () => {
+    stopAllListen();
     stopSpeech();
     stopRecognition();
     showView("pick");
@@ -367,13 +527,20 @@
   els.repeatSetBtn.addEventListener("click", () => {
     state.index = 0;
     renderLine();
+    if (state.mode === "all") startAllListen();
   });
 
   els.againBtn.addEventListener("click", () => {
+    if (state.mode === "all") {
+      openAllListen(0);
+      return;
+    }
     openTopic(state.topicId, 0);
   });
 
   els.homeBtn.addEventListener("click", () => {
+    stopAllListen();
+    stopSpeech();
     showView("pick");
     syncContinueButton();
   });
@@ -381,6 +548,21 @@
   if (els.voice) {
     els.voice.addEventListener("change", () => {
       localStorage.setItem(VOICE_KEY, els.voice.value);
+    });
+  }
+
+  if (els.pauseAllBtn) {
+    els.pauseAllBtn.addEventListener("click", () => {
+      if (state.mode !== "all") return;
+      if (state.allListenPlaying) {
+        stopAllListen();
+        stopSpeech();
+        setPhase("READY");
+        els.hintText.textContent = "일시정지됨. 이어 듣기를 누르면 이어서 재생됩니다.";
+        setAllListenUi(true);
+        return;
+      }
+      startAllListen();
     });
   }
 
