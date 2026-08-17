@@ -1,5 +1,7 @@
 (() => {
   const STORAGE_KEY = "echo-quiz-list-v1";
+  const MEMORY_KEY = "echo-quiz-memory-v1";
+  const INTERVALS = [1, 3, 7, 14, 30];
 
   const MEANINGS = {
     apart: "떨어져, 따로",
@@ -28,8 +30,11 @@
     setupPanel: document.getElementById("quiz-setup-panel"),
     playPanel: document.getElementById("quiz-play-panel"),
     hint: document.getElementById("quiz-setup-hint"),
+    memoryStatus: document.getElementById("quiz-memory-status"),
     text: document.getElementById("quiz-text"),
     sampleBtn: document.getElementById("quiz-sample-btn"),
+    saveBtn: document.getElementById("quiz-save-btn"),
+    reviewBtn: document.getElementById("quiz-review-btn"),
     startBtn: document.getElementById("quiz-start-btn"),
     prompt: document.getElementById("quiz-prompt"),
     sentence: document.getElementById("quiz-sentence"),
@@ -62,6 +67,7 @@ still`;
     answered: false,
     audio: null,
     misses: [],
+    reviewMode: false,
   };
 
   function setProgress(label, ratio) {
@@ -148,6 +154,124 @@ still`;
     return items;
   }
 
+  function todayStamp() {
+    const now = new Date();
+    return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  function loadMemory() {
+    try {
+      const data = JSON.parse(localStorage.getItem(MEMORY_KEY) || "{}");
+      return data.words && typeof data.words === "object" ? data : { words: {} };
+    } catch {
+      return { words: {} };
+    }
+  }
+
+  function saveMemory(memory) {
+    localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+  }
+
+  function rememberWords(items) {
+    const memory = loadMemory();
+    items.forEach((item) => {
+      const key = normalizeAnswer(item.en);
+      const existing = memory.words[key] || {};
+      memory.words[key] = {
+        en: item.en,
+        ko: item.ko || existing.ko || lookupMeaning(item.en),
+        streak: existing.streak || 0,
+        intervalIndex: existing.intervalIndex || 0,
+        lastReviewed: existing.lastReviewed || 0,
+        nextReview: existing.nextReview || todayStamp(),
+        wrongCount: existing.wrongCount || 0,
+        correctCount: existing.correctCount || 0,
+      };
+    });
+    saveMemory(memory);
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      window.EchoCloud.upsertWords(Object.values(memory.words).filter((word) => items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))));
+    }
+    return memory;
+  }
+
+  function recordReview(answer, correct) {
+    const key = normalizeAnswer(answer);
+    const memory = loadMemory();
+    const word = memory.words[key];
+    if (!word) return;
+    const today = todayStamp();
+    word.lastReviewed = today;
+    if (correct) {
+      word.correctCount = (word.correctCount || 0) + 1;
+      word.streak = (word.streak || 0) + 1;
+      word.intervalIndex = Math.min(INTERVALS.length - 1, (word.intervalIndex || 0) + (word.streak === 1 ? 0 : 1));
+      word.nextReview = today + INTERVALS[word.intervalIndex] * 24 * 60 * 60 * 1000;
+    } else {
+      word.wrongCount = (word.wrongCount || 0) + 1;
+      word.streak = 0;
+      word.intervalIndex = 0;
+      word.nextReview = today + INTERVALS[0] * 24 * 60 * 60 * 1000;
+    }
+    memory.words[key] = word;
+    saveMemory(memory);
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      window.EchoCloud.upsertWord(word);
+    }
+  }
+
+  function dueWords() {
+    const today = todayStamp();
+    return Object.values(loadMemory().words)
+      .filter((word) => !word.nextReview || word.nextReview <= today)
+      .sort((a, b) => (a.nextReview || 0) - (b.nextReview || 0));
+  }
+
+  function updateMemoryStatus() {
+    if (!els.memoryStatus) return;
+    const all = Object.values(loadMemory().words);
+    const due = dueWords();
+    const cloud = window.EchoCloud ? window.EchoCloud.statusText() : "이 기기에만 저장";
+    els.memoryStatus.textContent = `저장된 단어 ${all.length}개 · 오늘 복습 ${due.length}개 · ${cloud}`;
+  }
+
+  async function syncFromCloud() {
+    if (!window.EchoCloud) return;
+    const ok = await window.EchoCloud.init();
+    if (!ok) {
+      updateMemoryStatus();
+      return;
+    }
+    const remote = await window.EchoCloud.pullWords();
+    if (!remote.length) {
+      const local = Object.values(loadMemory().words);
+      if (local.length) await window.EchoCloud.upsertWords(local);
+      updateMemoryStatus();
+      return;
+    }
+    const memory = loadMemory();
+    remote.forEach((word) => {
+      const key = normalizeAnswer(word.en);
+      const existing = memory.words[key];
+      if (!existing || (word.lastReviewed || 0) >= (existing.lastReviewed || 0)) {
+        memory.words[key] = word;
+      }
+    });
+    saveMemory(memory);
+    updateMemoryStatus();
+  }
+
+  function questionsFromItems(items) {
+    return items.slice(0, 30).map((item) => {
+      const ko = item.ko || lookupMeaning(item.en);
+      return {
+        prompt: ko || `${item.en}의 스펠링`,
+        answer: item.en,
+        translated: Boolean(ko),
+      };
+    });
+  }
+
   function stopSpeech() {
     window.speechSynthesis.cancel();
     if (state.audio) {
@@ -156,26 +280,6 @@ still`;
       state.audio.src = "";
       state.audio = null;
     }
-  }
-
-  function speakLocal(text, lang) {
-    return new Promise((resolve) => {
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = lang || "en-US";
-      utter.rate = lang === "ko-KR" ? 0.95 : 0.92;
-      const voices = window.speechSynthesis.getVoices();
-      const preferred =
-        lang === "ko-KR"
-          ? voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang) && /Google|Neural|Heami|Yuna|SunHi|InJoon/i.test(v.name)) ||
-            voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang))
-          : voices.find((v) => /en-US/i.test(v.lang) && /Google|Neural|Aria|Jenny|Ava|Samantha/i.test(v.name)) ||
-            voices.find((v) => /en-US/i.test(v.lang)) ||
-            voices.find((v) => /^en/i.test(v.lang));
-      if (preferred) utter.voice = preferred;
-      utter.onend = () => resolve();
-      utter.onerror = () => resolve();
-      window.speechSynthesis.speak(utter);
-    });
   }
 
   function koreanForSpeech(text) {
@@ -193,48 +297,169 @@ still`;
     return `audio/quiz/${wordSlug(text)}.mp3`;
   }
 
-  function playAudioFile(url) {
+  function playFromUrl(url) {
     return new Promise((resolve) => {
       const audio = new Audio(url);
       state.audio = audio;
-      audio.onended = () => resolve(true);
-      audio.onerror = () => resolve(false);
-      audio.play().then(() => {}).catch(() => resolve(false));
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = window.setTimeout(() => {
+        if (audio.paused && audio.currentTime === 0) {
+          audio.pause();
+          done(false);
+        }
+      }, 4000);
+      audio.onplaying = () => window.clearTimeout(timer);
+      audio.onended = () => done(true);
+      audio.onerror = () => done(false);
+      audio.play().then(() => {}).catch(() => done(false));
+    });
+  }
+
+  function playBlob(blob) {
+    const url = URL.createObjectURL(blob);
+    return playFromUrl(url).then((ok) => {
+      URL.revokeObjectURL(url);
+      return ok;
+    });
+  }
+
+  function openAudioDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("echo-quiz-audio-v1", 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore("clips");
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function getCachedAudio(slug) {
+    try {
+      const db = await openAudioDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction("clips", "readonly");
+        const req = tx.objectStore("clips").get(slug);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async function setCachedAudio(slug, blob) {
+    try {
+      const db = await openAudioDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction("clips", "readwrite");
+        tx.objectStore("clips").put(blob, slug);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function fetchNeuralAudio(text) {
+    const res = await fetch(
+      `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent("en-US-JennyNeural")}&speed=1`
+    );
+    if (!res.ok) return null;
+    const type = res.headers.get("content-type") || "";
+    if (!type.includes("audio")) return null;
+    return res.blob();
+  }
+
+  function googleTtsUrl(text) {
+    return `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=en-US&q=${encodeURIComponent(text)}`;
+  }
+
+  function pickEnglishVoice() {
+    const voices = window.speechSynthesis.getVoices();
+    return (
+      voices.find((v) => /en-US/i.test(v.lang) && /Google US English|Microsoft (Aria|Jenny|Guy|Ava|Andrew) Online/i.test(v.name)) ||
+      voices.find((v) => /en-US/i.test(v.lang) && /Google|Neural|Natural|Online/i.test(v.name)) ||
+      voices.find((v) => /en-US/i.test(v.lang) && !/Korean|Heami|Yuna|SunHi|InJoon/i.test(v.name)) ||
+      voices.find((v) => /^en(-|_)US/i.test(v.lang)) ||
+      voices.find((v) => /^en/i.test(v.lang) && !/ko/i.test(v.lang)) ||
+      null
+    );
+  }
+
+  function speakLocal(text, lang) {
+    return new Promise((resolve) => {
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = lang || "en-US";
+      utter.rate = lang === "ko-KR" ? 0.95 : 0.9;
+      const voices = window.speechSynthesis.getVoices();
+      const preferred =
+        lang === "ko-KR"
+          ? voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang) && /Google|Neural|Heami|Yuna|SunHi|InJoon/i.test(v.name)) ||
+            voices.find((v) => /ko-KR|ko_KR|^ko/i.test(v.lang))
+          : pickEnglishVoice();
+      if (preferred) utter.voice = preferred;
+      if (lang !== "ko-KR" && preferred && /ko/i.test(preferred.lang)) {
+        resolve();
+        return;
+      }
+      utter.onend = () => resolve();
+      utter.onerror = () => resolve();
+      window.speechSynthesis.speak(utter);
     });
   }
 
   async function speakWord(text) {
     stopSpeech();
-    const played = await playAudioFile(quizAudioUrl(text));
-    if (played) return;
+    const slug = wordSlug(text);
+
+    if (await playFromUrl(quizAudioUrl(text))) return;
+
+    const cached = await getCachedAudio(slug);
+    if (cached && (await playBlob(cached))) return;
 
     try {
-      const res = await fetch(
-        `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent("en-US-JennyNeural")}&speed=1`
-      );
-      if (res.ok && (res.headers.get("content-type") || "").includes("audio")) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        state.audio = audio;
-        await audio.play();
-        await new Promise((resolve) => {
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            resolve();
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(url);
-            resolve();
-          };
-        });
-        return;
+      const blob = await fetchNeuralAudio(text);
+      if (blob) {
+        await setCachedAudio(slug, blob);
+        if (await playBlob(blob)) return;
       }
     } catch {
-      /* ignore */
+      /* GitHub Pages has no /api/tts */
     }
 
+    if (await playFromUrl(googleTtsUrl(text))) return;
+
     await speakLocal(text, "en-US");
+  }
+
+  async function prefetchAudio(items) {
+    const list = (items || []).slice(0, 30);
+    for (const item of list) {
+      const text = item.en || item.answer;
+      if (!text) continue;
+      const slug = wordSlug(text);
+      if (await getCachedAudio(slug)) continue;
+      try {
+        const probe = await fetch(quizAudioUrl(text), { method: "HEAD" });
+        if (probe.ok) continue;
+      } catch {
+        /* continue */
+      }
+      try {
+        const blob = await fetchNeuralAudio(text);
+        if (blob) await setCachedAudio(slug, blob);
+      } catch {
+        break;
+      }
+    }
   }
 
   function speakKorean(text) {
@@ -249,14 +474,7 @@ still`;
   }
 
   function buildQuestions(rawText) {
-    return parseWordList(rawText).slice(0, 30).map((item) => {
-      const ko = item.ko || lookupMeaning(item.en);
-      return {
-        prompt: ko || `${item.en}의 스펠링`,
-        answer: item.en,
-        translated: Boolean(ko),
-      };
-    });
+    return questionsFromItems(parseWordList(rawText));
   }
 
   function renderQuestion() {
@@ -308,6 +526,7 @@ still`;
         typed,
       });
     }
+    recordReview(item.answer, correct);
     els.answer.disabled = true;
     els.checkBtn.disabled = true;
     els.answer.classList.toggle("correct", correct);
@@ -322,6 +541,46 @@ still`;
     speakWord(item.answer);
   }
 
+  function beginQuiz(questions, reviewMode) {
+    state.questions = questions;
+    state.index = 0;
+    state.score = 0;
+    state.misses = [];
+    state.reviewMode = Boolean(reviewMode);
+    els.setupPanel.hidden = true;
+    els.playPanel.hidden = false;
+    renderQuestion();
+  }
+
+  function saveCurrentList() {
+    const raw = els.text.value.trim();
+    if (!raw) {
+      if (els.hint) els.hint.textContent = "저장할 단어를 먼저 입력해 주세요.";
+      return;
+    }
+    const items = parseWordList(raw);
+    if (!items.length) {
+      if (els.hint) els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, raw);
+    rememberWords(items);
+    updateMemoryStatus();
+    prefetchAudio(items);
+    if (els.hint) els.hint.textContent = `${items.length}개 단어를 저장했습니다. 같은 브라우저에서 복습할 수 있습니다.`;
+  }
+
+  function startReview() {
+    const due = dueWords();
+    if (!due.length) {
+      if (els.hint) els.hint.textContent = "오늘은 복습할 단어가 없습니다. 새 단어를 저장하거나 퀴즈를 풀어 보세요.";
+      updateMemoryStatus();
+      return;
+    }
+    beginQuiz(questionsFromItems(due), true);
+    prefetchAudio(due);
+  }
+
   function startQuiz() {
     const raw = els.text.value.trim();
     if (!raw) {
@@ -329,7 +588,8 @@ still`;
       return;
     }
     localStorage.setItem(STORAGE_KEY, raw);
-    const questions = buildQuestions(raw);
+    const items = parseWordList(raw);
+    const questions = questionsFromItems(items);
     if (questions.length < 1) {
       if (els.hint) {
         els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
@@ -337,13 +597,10 @@ still`;
       setProgress("입력 확인", 0);
       return;
     }
-    state.questions = questions;
-    state.index = 0;
-    state.score = 0;
-    state.misses = [];
-    els.setupPanel.hidden = true;
-    els.playPanel.hidden = false;
-    renderQuestion();
+    rememberWords(items);
+    updateMemoryStatus();
+    prefetchAudio(items);
+    beginQuiz(questions, false);
   }
 
   function showResult() {
@@ -355,13 +612,15 @@ still`;
     if (els.listenBtn) els.listenBtn.hidden = true;
     els.feedback.hidden = false;
     if (state.score === total) {
-      els.feedback.textContent = "전부 맞았습니다. 스펠링이 몸에 익었습니다.";
+      els.feedback.textContent = state.reviewMode
+        ? "오늘 복습을 모두 맞았습니다. 맞은 단어는 며칠 뒤에 다시 나옵니다."
+        : "전부 맞았습니다. 이 단어들은 저장되어 나중에 복습됩니다.";
       if (els.missList) {
         els.missList.hidden = true;
         els.missList.innerHTML = "";
       }
     } else {
-      els.feedback.textContent = `틀린 단어 ${state.misses.length}개입니다.`;
+      els.feedback.textContent = `틀린 단어 ${state.misses.length}개입니다. 이 단어들은 내일 복습에 다시 나옵니다.`;
       if (els.missList) {
         els.missList.hidden = false;
         els.missList.innerHTML = state.misses
@@ -395,22 +654,27 @@ still`;
     setProgress("목록 입력", 0);
     els.nextBtn.dataset.done = "";
     if (els.hint) {
-      els.hint.textContent = "영어 단어만 한 줄에 하나씩 적어도 됩니다. Part 2 같은 제목은 자동으로 건너뜁니다.";
+      els.hint.textContent =
+        "단어를 저장해 두면 같은 폰·브라우저에서 복습할 수 있습니다. 틀린 단어는 내일, 맞은 단어는 며칠 뒤에 다시 나옵니다.";
     }
+    updateMemoryStatus();
   }
 
-  function open() {
+  async function open() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) els.text.value = saved;
     resetSetup();
     els.view.hidden = false;
+    await syncFromCloud();
   }
 
   els.sampleBtn.addEventListener("click", () => {
     els.text.value = SAMPLE;
-    if (els.hint) els.hint.textContent = "예시 목록을 넣었습니다. 그대로 시작하거나 내 단어로 바꿔 주세요.";
+    if (els.hint) els.hint.textContent = "예시 목록을 넣었습니다. 저장하거나 퀴즈를 시작해 주세요.";
   });
 
+  if (els.saveBtn) els.saveBtn.addEventListener("click", saveCurrentList);
+  if (els.reviewBtn) els.reviewBtn.addEventListener("click", startReview);
   els.startBtn.addEventListener("click", startQuiz);
   els.form.addEventListener("submit", checkAnswer);
   els.nextBtn.addEventListener("click", () => {

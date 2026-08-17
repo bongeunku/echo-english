@@ -169,6 +169,10 @@ main {
   gap: 0.75rem;
 }
 
+#quiz-setup-panel .cta-row {
+  margin-top: 0.85rem;
+}
+
 .btn {
   appearance: none;
   border: 1px solid transparent;

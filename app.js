@@ -476,8 +476,8 @@
     quizBtn.innerHTML = `
       <span class="emoji" aria-hidden="true">📷</span>
       <h3>스펠링 퀴즈</h3>
-      <p>단어 목록을 직접 입력하고 한국어 뜻 → 영어 스펠링 연습</p>
-      <div class="meta">직접 입력 · 주관식</div>
+      <p>단어를 저장하고, 틀린 단어는 나중에 복습</p>
+      <div class="meta">저장 · 오늘 복습</div>
     `;
     quizBtn.addEventListener("click", () => {
       stopAllListen();
