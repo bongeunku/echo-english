@@ -89,6 +89,16 @@ main,
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.brand:hover .brand-name {
+  color: var(--accent);
 }
 
 .brand-mark {
@@ -173,6 +183,55 @@ main {
   margin-top: 0.85rem;
 }
 
+.quiz-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 0.85rem;
+}
+
+.quiz-pane {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem 1rem 0.85rem;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.quiz-pane-title {
+  margin: 0 0 0.55rem;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.quiz-pane-actions {
+  margin-top: 0.75rem;
+}
+
+.quiz-start-row {
+  margin-top: 1rem;
+  justify-content: center;
+}
+
+.quiz-mode-note {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+#quiz-loaded-text {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.85rem 0.95rem;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+}
+
 .btn {
   appearance: none;
   border: 1px solid transparent;
@@ -206,6 +265,20 @@ main {
   border-color: var(--line);
   color: var(--ink);
   backdrop-filter: blur(8px);
+}
+
+.btn.ghost:hover {
+  border-color: rgba(20, 34, 31, 0.22);
+}
+
+.btn.ghost.danger {
+  color: #9b2c2c;
+  border-color: rgba(155, 44, 44, 0.28);
+}
+
+.btn.ghost.danger:hover {
+  border-color: rgba(155, 44, 44, 0.45);
+  background: rgba(155, 44, 44, 0.08);
 }
 
 .btn.text {
@@ -685,6 +758,17 @@ main {
   color: var(--ink);
 }
 
+.quiz-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.7rem;
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
 .quiz-listen {
   margin: 0 0 1rem;
 }
@@ -822,6 +906,10 @@ main {
   .practice-bar {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .quiz-split {
+    grid-template-columns: 1fr;
   }
 
   .voice-tools {

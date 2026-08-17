@@ -34,6 +34,7 @@
     repeatSetBtn: document.getElementById("repeat-set-btn"),
     againBtn: document.getElementById("again-btn"),
     homeBtn: document.getElementById("home-btn"),
+    brandBtn: document.getElementById("brand-btn"),
     doneSummary: document.getElementById("done-summary"),
     voiceNote: document.getElementById("voice-note"),
     pauseAllBtn: document.getElementById("pause-all-btn"),
@@ -476,8 +477,8 @@
     quizBtn.innerHTML = `
       <span class="emoji" aria-hidden="true">📷</span>
       <h3>스펠링 퀴즈</h3>
-      <p>단어를 저장하고, 틀린 단어는 나중에 복습</p>
-      <div class="meta">저장 · 오늘 복습</div>
+      <p>한국어 뜻 → 영어 스펠링, 영어 스펠링 → 한국어 뜻</p>
+      <div class="meta">한국어 예문 · 영어 예문</div>
     `;
     quizBtn.addEventListener("click", () => {
       stopAllListen();
@@ -513,6 +514,15 @@
     }
   }
 
+  function goToTopics() {
+    stopAllListen();
+    stopSpeech();
+    stopRecognition();
+    if (window.EchoQuiz && window.EchoQuiz.stop) window.EchoQuiz.stop();
+    showView("pick");
+    syncContinueButton();
+  }
+
   els.startBtn.addEventListener("click", () => {
     showView("pick");
   });
@@ -526,12 +536,7 @@
     if (progress.topicId) openTopic(progress.topicId, progress.index || 0);
   });
 
-  els.backBtn.addEventListener("click", () => {
-    stopAllListen();
-    stopSpeech();
-    stopRecognition();
-    showView("pick");
-  });
+  els.backBtn.addEventListener("click", goToTopics);
 
   els.listenBtn.addEventListener("click", handleListen);
   els.echoBtn.addEventListener("click", handleEcho);
@@ -557,12 +562,11 @@
     openTopic(state.topicId, 0);
   });
 
-  els.homeBtn.addEventListener("click", () => {
-    stopAllListen();
-    stopSpeech();
-    showView("pick");
-    syncContinueButton();
-  });
+  els.homeBtn.addEventListener("click", goToTopics);
+
+  if (els.brandBtn) {
+    els.brandBtn.addEventListener("click", goToTopics);
+  }
 
   if (els.voice) {
     els.voice.addEventListener("change", () => {
@@ -587,10 +591,7 @@
 
   const quizBackBtn = document.getElementById("quiz-back-btn");
   if (quizBackBtn) {
-    quizBackBtn.addEventListener("click", () => {
-      if (window.EchoQuiz && window.EchoQuiz.stop) window.EchoQuiz.stop();
-      showView("pick");
-    });
+    quizBackBtn.addEventListener("click", goToTopics);
   }
   renderTopics();
   syncContinueButton();

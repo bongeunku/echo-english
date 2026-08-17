@@ -10,17 +10,17 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=14" />
+    <link rel="stylesheet" href="./styles.css?v=25" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
     <div class="aurora" aria-hidden="true"></div>
 
     <header class="top">
-      <div class="brand">
+      <button class="brand" id="brand-btn" type="button" aria-label="주제 화면으로">
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">ECHO</span>
-      </div>
+      </button>
       <p class="tagline">듣고 → 따라하고 → 입이 열립니다</p>
     </header>
 
@@ -73,20 +73,45 @@
           <article class="card-stage quiz-card">
             <h2 class="quiz-title">단어 스펠링 퀴즈</h2>
             <p class="hint" id="quiz-setup-hint">
-              단어를 저장해 두면 같은 폰·브라우저에서 나중에 복습할 수 있습니다. 틀린 단어는 내일, 맞은 단어는 며칠 뒤에 다시 나옵니다.
+              왼쪽에서 단어를 저장·삭제하고, 오른쪽에서 불러온 뒤 퀴즈 종류를 고르세요. 둘 다 주관식입니다.
             </p>
-            <p class="voice-note" id="quiz-memory-status">저장된 단어 0개 · 오늘 복습 0개</p>
-            <label class="quiz-text-label" for="quiz-text">단어 목록 (한 줄에 하나)</label>
-            <textarea
-              id="quiz-text"
-              rows="10"
-              placeholder="apart&#10;break up&#10;continent"
-            ></textarea>
-            <div class="cta-row">
-              <button class="btn ghost" id="quiz-sample-btn" type="button">예시 불러오기</button>
-              <button class="btn ghost" id="quiz-save-btn" type="button">단어 저장</button>
-              <button class="btn ghost" id="quiz-review-btn" type="button">오늘 복습</button>
-              <button class="btn primary" id="quiz-start-btn" type="button">퀴즈 시작</button>
+            <p class="voice-note" id="quiz-memory-status">저장된 단어 0개</p>
+            <div class="quiz-split">
+              <section class="quiz-pane quiz-pane-save">
+                <h3 class="quiz-pane-title">단어 저장 · 삭제</h3>
+                <label class="quiz-text-label" for="quiz-text">새 단어 (한 줄에 하나)</label>
+                <textarea
+                  id="quiz-text"
+                  rows="10"
+                  placeholder="apart&#10;break up&#10;continent"
+                ></textarea>
+                <div class="cta-row quiz-pane-actions">
+                  <button class="btn ghost" id="quiz-save-btn" type="button">단어 저장</button>
+                  <button class="btn ghost danger" id="quiz-delete-btn" type="button">단어 삭제</button>
+                </div>
+              </section>
+              <section class="quiz-pane quiz-pane-load">
+                <h3 class="quiz-pane-title">불러오기</h3>
+                <label class="quiz-text-label" for="quiz-loaded-text">저장된 단어</label>
+                <textarea
+                  id="quiz-loaded-text"
+                  rows="10"
+                  readonly
+                  placeholder="불러오기를 누르면 여기에 표시됩니다."
+                ></textarea>
+                <div class="cta-row quiz-pane-actions">
+                  <button class="btn ghost" id="quiz-load-btn" type="button">불러오기</button>
+                </div>
+                <div class="quiz-pager" id="quiz-pager" hidden>
+                  <button class="btn ghost small" id="quiz-prev-page-btn" type="button">이전</button>
+                  <span id="quiz-page-label">1 / 1</span>
+                  <button class="btn ghost small" id="quiz-next-page-btn" type="button">다음</button>
+                </div>
+              </section>
+            </div>
+            <div class="cta-row quiz-start-row">
+              <button class="btn primary" id="quiz-start-ko-btn" type="button">한국어 예문</button>
+              <button class="btn ghost" id="quiz-start-en-btn" type="button">영어 예문</button>
             </div>
           </article>
         </div>
@@ -200,10 +225,10 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="./config.js?v=16"></script>
-    <script src="./cloud.js?v=16"></script>
-    <script src="./data.js?v=16"></script>
-    <script src="./quiz.js?v=16"></script>
-    <script src="./app.js?v=16"></script>
+    <script src="./config.js?v=25"></script>
+    <script src="./cloud.js?v=25"></script>
+    <script src="./data.js?v=25"></script>
+    <script src="./quiz.js?v=25"></script>
+    <script src="./app.js?v=25"></script>
   </body>
 </html>

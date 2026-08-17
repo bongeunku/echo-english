@@ -2,6 +2,7 @@
   const STORAGE_KEY = "echo-quiz-list-v1";
   const MEMORY_KEY = "echo-quiz-memory-v1";
   const INTERVALS = [1, 3, 7, 14, 30];
+  const PAGE_SIZE = 20;
 
   const MEANINGS = {
     apart: "떨어져, 따로",
@@ -32,9 +33,16 @@
     hint: document.getElementById("quiz-setup-hint"),
     memoryStatus: document.getElementById("quiz-memory-status"),
     text: document.getElementById("quiz-text"),
-    sampleBtn: document.getElementById("quiz-sample-btn"),
+    loadedText: document.getElementById("quiz-loaded-text"),
+    loadBtn: document.getElementById("quiz-load-btn"),
     saveBtn: document.getElementById("quiz-save-btn"),
-    reviewBtn: document.getElementById("quiz-review-btn"),
+    deleteBtn: document.getElementById("quiz-delete-btn"),
+    pager: document.getElementById("quiz-pager"),
+    pageLabel: document.getElementById("quiz-page-label"),
+    prevPageBtn: document.getElementById("quiz-prev-page-btn"),
+    nextPageBtn: document.getElementById("quiz-next-page-btn"),
+    startKoBtn: document.getElementById("quiz-start-ko-btn"),
+    startEnBtn: document.getElementById("quiz-start-en-btn"),
     startBtn: document.getElementById("quiz-start-btn"),
     prompt: document.getElementById("quiz-prompt"),
     sentence: document.getElementById("quiz-sentence"),
@@ -47,19 +55,6 @@
     missList: document.getElementById("quiz-miss-list"),
   };
 
-  const SAMPLE = `apart
-break up
-continent
-glacier
-icy
-in the past
-join
-large
-little bit
-Pangaea
-piece
-still`;
-
   const state = {
     questions: [],
     index: 0,
@@ -67,7 +62,11 @@ still`;
     answered: false,
     audio: null,
     misses: [],
-    reviewMode: false,
+    page: 0,
+    total: 0,
+    browsing: false,
+    loadedWords: [],
+    quizType: "ko",
   };
 
   function setProgress(label, ratio) {
@@ -186,13 +185,21 @@ still`;
         nextReview: existing.nextReview || todayStamp(),
         wrongCount: existing.wrongCount || 0,
         correctCount: existing.correctCount || 0,
+        updatedAt: Date.now(),
       };
     });
     saveMemory(memory);
-    if (window.EchoCloud && window.EchoCloud.isReady()) {
-      window.EchoCloud.upsertWords(Object.values(memory.words).filter((word) => items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))));
-    }
-    return memory;
+    return Object.values(memory.words).filter((word) =>
+      items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))
+    );
+  }
+
+  function forgetWords(items) {
+    const memory = loadMemory();
+    items.forEach((item) => {
+      delete memory.words[normalizeAnswer(item.en)];
+    });
+    saveMemory(memory);
   }
 
   function recordReview(answer, correct) {
@@ -220,56 +227,187 @@ still`;
     }
   }
 
-  function dueWords() {
-    const today = todayStamp();
-    return Object.values(loadMemory().words)
-      .filter((word) => !word.nextReview || word.nextReview <= today)
-      .sort((a, b) => (a.nextReview || 0) - (b.nextReview || 0));
+  function localWordList() {
+    return Object.values(loadMemory().words).sort((a, b) => (b.updatedAt || b.lastReviewed || 0) - (a.updatedAt || a.lastReviewed || 0));
   }
 
-  function updateMemoryStatus() {
-    if (!els.memoryStatus) return;
-    const all = Object.values(loadMemory().words);
-    const due = dueWords();
-    const cloud = window.EchoCloud ? window.EchoCloud.statusText() : "이 기기에만 저장";
-    els.memoryStatus.textContent = `저장된 단어 ${all.length}개 · 오늘 복습 ${due.length}개 · ${cloud}`;
+  function formatWordLine(word) {
+    return word.ko ? `${word.en} - ${word.ko}` : word.en;
   }
 
-  async function syncFromCloud() {
-    if (!window.EchoCloud) return;
-    const ok = await window.EchoCloud.init();
-    if (!ok) {
-      updateMemoryStatus();
-      return;
-    }
-    const remote = await window.EchoCloud.pullWords();
-    if (!remote.length) {
-      const local = Object.values(loadMemory().words);
-      if (local.length) await window.EchoCloud.upsertWords(local);
-      updateMemoryStatus();
-      return;
-    }
+  function mergeRemoteIntoMemory(words) {
+    if (!words || !words.length) return;
     const memory = loadMemory();
-    remote.forEach((word) => {
+    words.forEach((word) => {
       const key = normalizeAnswer(word.en);
-      const existing = memory.words[key];
-      if (!existing || (word.lastReviewed || 0) >= (existing.lastReviewed || 0)) {
-        memory.words[key] = word;
-      }
+      if (!key) return;
+      memory.words[key] = {
+        ...(memory.words[key] || {}),
+        ...word,
+      };
     });
     saveMemory(memory);
-    updateMemoryStatus();
+  }
+
+  function pageFromList(list, page) {
+    const offset = page * PAGE_SIZE;
+    return {
+      words: list.slice(offset, offset + PAGE_SIZE),
+      total: list.length,
+    };
+  }
+
+  async function storedCount() {
+    const local = localWordList().length;
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      const count = await window.EchoCloud.countWords();
+      if (typeof count === "number") return Math.max(count, local);
+    }
+    return local;
+  }
+
+  async function updateMemoryStatus() {
+    if (!els.memoryStatus) return;
+    const count = await storedCount();
+    state.total = count;
+    const cloud = window.EchoCloud ? window.EchoCloud.statusText() : "이 기기에만 저장";
+    els.memoryStatus.textContent = `저장된 단어 ${count}개 · ${cloud}`;
+    updatePager();
+  }
+
+  function pageCount() {
+    return Math.max(1, Math.ceil((state.total || 0) / PAGE_SIZE));
+  }
+
+  function updatePager() {
+    if (!els.pager) return;
+    const total = state.total || 0;
+    const pages = pageCount();
+    const page = Math.min(state.page, pages - 1);
+    state.page = Math.max(0, page);
+    els.pager.hidden = !state.browsing || total <= 0;
+    if (els.pageLabel) els.pageLabel.textContent = `${state.page + 1} / ${pages}`;
+    if (els.prevPageBtn) els.prevPageBtn.disabled = state.page <= 0;
+    if (els.nextPageBtn) els.nextPageBtn.disabled = state.page >= pages - 1 || total <= PAGE_SIZE;
+  }
+
+  async function ensureCloud() {
+    if (!window.EchoCloud) return false;
+    if (window.EchoCloud.isReady()) return true;
+    return window.EchoCloud.init();
+  }
+
+  async function fetchWordPage(page) {
+    const local = localWordList();
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      const remote = await window.EchoCloud.pullWordsPage(page * PAGE_SIZE, PAGE_SIZE);
+      if (!remote.error && (remote.total > 0 || remote.words.length)) {
+        mergeRemoteIntoMemory(remote.words);
+        return { ...remote, source: "cloud" };
+      }
+      if (local.length) {
+        if (!remote.error) {
+          await window.EchoCloud.upsertWords(local);
+          const uploaded = await window.EchoCloud.pullWordsPage(page * PAGE_SIZE, PAGE_SIZE);
+          if (!uploaded.error && (uploaded.total > 0 || uploaded.words.length)) {
+            mergeRemoteIntoMemory(uploaded.words);
+            return { ...uploaded, source: "cloud" };
+          }
+        }
+        return { ...pageFromList(local, page), source: "local" };
+      }
+      return { words: [], total: 0, source: remote.error ? "error" : "cloud" };
+    }
+    return { ...pageFromList(local, page), source: "local" };
+  }
+
+  async function loadWordPage(page, announce) {
+    await ensureCloud();
+    const nextPage = Math.max(0, page);
+    const result = await fetchWordPage(nextPage);
+    state.total = result.total;
+    const pages = Math.max(1, Math.ceil((result.total || 0) / PAGE_SIZE));
+    if (result.total && nextPage >= pages) {
+      return loadWordPage(pages - 1, announce);
+    }
+    state.page = nextPage;
+    state.browsing = true;
+    if (!result.words.length) {
+      state.loadedWords = [];
+      if (els.loadedText) els.loadedText.value = "";
+      updatePager();
+      await updateMemoryStatus();
+      if (announce && els.hint) {
+        els.hint.textContent = window.EchoCloud && window.EchoCloud.isReady()
+          ? "이 계정에 저장된 단어가 없습니다. 왼쪽에 입력한 뒤 저장해 주세요."
+          : "저장된 단어가 없습니다. 왼쪽에 입력한 뒤 저장해 주세요.";
+      }
+      return;
+    }
+    state.loadedWords = result.words;
+    if (els.loadedText) els.loadedText.value = result.words.map(formatWordLine).join("\n");
+    updatePager();
+    await updateMemoryStatus();
+    prefetchAudio(result.words);
+    if (announce && els.hint) {
+      const start = nextPage * PAGE_SIZE + 1;
+      const end = nextPage * PAGE_SIZE + result.words.length;
+      const where = result.source === "local" ? "이 기기에서" : "클라우드에서";
+      els.hint.textContent = `${where} ${start}–${end}번째 단어 ${result.words.length}개를 불러왔습니다.`;
+    }
   }
 
   function questionsFromItems(items) {
-    return items.slice(0, 30).map((item) => {
+    return items.slice(0, PAGE_SIZE).map((item) => {
       const ko = item.ko || lookupMeaning(item.en);
       return {
+        type: "spelling",
         prompt: ko || `${item.en}의 스펠링`,
         answer: item.en,
+        answerEn: item.en,
         translated: Boolean(ko),
       };
     });
+  }
+
+  function wordKo(item) {
+    return (item && (item.ko || lookupMeaning(item.en))) || "";
+  }
+
+  function meaningQuestionsFromItems(items) {
+    return items
+      .slice(0, PAGE_SIZE)
+      .map((item) => {
+        const ko = wordKo(item);
+        if (!ko) return null;
+        return {
+          type: "meaning",
+          prompt: item.en,
+          answer: ko,
+          answerEn: item.en,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function normalizeKorean(text) {
+    return (text || "")
+      .replace(/\(.*?\)/g, "")
+      .replace(/[·,/|]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function koreanMatches(typed, answer) {
+    const input = normalizeKorean(typed);
+    if (!input) return false;
+    const full = normalizeKorean(answer);
+    if (input === full) return true;
+    const alts = String(answer || "")
+      .split(/[·,/|]/)
+      .map((part) => normalizeKorean(part.replace(/\(.*?\)/g, "")))
+      .filter(Boolean);
+    return alts.some((alt) => input === alt);
   }
 
   function stopSpeech() {
@@ -299,8 +437,12 @@ still`;
 
   function playFromUrl(url) {
     return new Promise((resolve) => {
-      const audio = new Audio(url);
+      const audio = new Audio();
       state.audio = audio;
+      audio.preload = "auto";
+      audio.preservesPitch = true;
+      audio.playbackRate = 1;
+      audio.volume = 1;
       let settled = false;
       const done = (ok) => {
         if (settled) return;
@@ -313,10 +455,11 @@ still`;
           audio.pause();
           done(false);
         }
-      }, 4000);
+      }, 5000);
       audio.onplaying = () => window.clearTimeout(timer);
       audio.onended = () => done(true);
       audio.onerror = () => done(false);
+      audio.src = url;
       audio.play().then(() => {}).catch(() => done(false));
     });
   }
@@ -331,7 +474,7 @@ still`;
 
   function openAudioDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open("echo-quiz-audio-v1", 1);
+      const req = indexedDB.open("echo-quiz-audio-v2", 1);
       req.onupgradeneeded = () => {
         req.result.createObjectStore("clips");
       };
@@ -378,17 +521,36 @@ still`;
     return res.blob();
   }
 
-  function googleTtsUrl(text) {
-    return `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=en-US&q=${encodeURIComponent(text)}`;
+  function youdaoUsUrl(text) {
+    return `https://dict.youdao.com/dictvoice?type=2&audio=${encodeURIComponent(text)}`;
+  }
+
+  async function dictionaryAudioUrl(text) {
+    const word = normalizeAnswer(text);
+    if (!word || word.split(" ").length > 2) return "";
+    try {
+      const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+      if (!res.ok) return "";
+      const data = await res.json();
+      const clips = (data && data[0] && data[0].phonetics) || [];
+      const us = clips.find((item) => item.audio && /[-_]us[-_.]/i.test(item.audio));
+      const any = clips.find((item) => item.audio);
+      return (us && us.audio) || (any && any.audio) || "";
+    } catch {
+      return "";
+    }
   }
 
   function pickEnglishVoice() {
     const voices = window.speechSynthesis.getVoices();
+    const english = voices.filter((v) => /^en(-|_)US/i.test(v.lang) && !/ko|Korean|Heami|Yuna|SunHi|InJoon|Compact/i.test(`${v.lang} ${v.name}`));
     return (
-      voices.find((v) => /en-US/i.test(v.lang) && /Google US English|Microsoft (Aria|Jenny|Guy|Ava|Andrew) Online/i.test(v.name)) ||
-      voices.find((v) => /en-US/i.test(v.lang) && /Google|Neural|Natural|Online/i.test(v.name)) ||
-      voices.find((v) => /en-US/i.test(v.lang) && !/Korean|Heami|Yuna|SunHi|InJoon/i.test(v.name)) ||
-      voices.find((v) => /^en(-|_)US/i.test(v.lang)) ||
+      english.find((v) => /Microsoft (Ava|Jenny|Aria|Andrew|Guy) Online/i.test(v.name)) ||
+      english.find((v) => /Natural|Neural|Online/i.test(v.name)) ||
+      english.find((v) => /Google US English/i.test(v.name)) ||
+      english.find((v) => /Google/i.test(v.name)) ||
+      english.find((v) => /Microsoft (Ava|Jenny|Zira|David)/i.test(v.name)) ||
+      english[0] ||
       voices.find((v) => /^en/i.test(v.lang) && !/ko/i.test(v.lang)) ||
       null
     );
@@ -398,7 +560,9 @@ still`;
     return new Promise((resolve) => {
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = lang || "en-US";
-      utter.rate = lang === "ko-KR" ? 0.95 : 0.9;
+      utter.rate = lang === "ko-KR" ? 0.95 : 1;
+      utter.pitch = 1;
+      utter.volume = 1;
       const voices = window.speechSynthesis.getVoices();
       const preferred =
         lang === "ko-KR"
@@ -416,32 +580,41 @@ still`;
     });
   }
 
+  async function cacheAndPlay(slug, blob) {
+    if (!blob || blob.size < 1200) return false;
+    await setCachedAudio(slug, blob);
+    return playBlob(blob);
+  }
+
   async function speakWord(text) {
     stopSpeech();
-    const slug = wordSlug(text);
+    const spoken = String(text || "").trim();
+    if (!spoken) return;
+    const slug = wordSlug(spoken);
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
 
-    if (await playFromUrl(quizAudioUrl(text))) return;
+    if (await playFromUrl(quizAudioUrl(spoken))) return;
 
     const cached = await getCachedAudio(slug);
-    if (cached && (await playBlob(cached))) return;
+    if (cached && cached.size >= 1200 && (await playBlob(cached))) return;
 
     try {
-      const blob = await fetchNeuralAudio(text);
-      if (blob) {
-        await setCachedAudio(slug, blob);
-        if (await playBlob(blob)) return;
-      }
+      const blob = await fetchNeuralAudio(spoken);
+      if (await cacheAndPlay(slug, blob)) return;
     } catch {
       /* GitHub Pages has no /api/tts */
     }
 
-    if (await playFromUrl(googleTtsUrl(text))) return;
+    const dictUrl = await dictionaryAudioUrl(spoken);
+    if (dictUrl && (await playFromUrl(dictUrl))) return;
 
-    await speakLocal(text, "en-US");
+    if (await playFromUrl(youdaoUsUrl(spoken))) return;
+
+    await speakLocal(spoken, "en-US");
   }
 
   async function prefetchAudio(items) {
-    const list = (items || []).slice(0, 30);
+    const list = (items || []).slice(0, PAGE_SIZE);
     for (const item of list) {
       const text = item.en || item.answer;
       if (!text) continue;
@@ -455,9 +628,23 @@ still`;
       }
       try {
         const blob = await fetchNeuralAudio(text);
-        if (blob) await setCachedAudio(slug, blob);
+        if (blob && blob.size >= 1200) {
+          await setCachedAudio(slug, blob);
+          continue;
+        }
       } catch {
-        break;
+        /* GitHub Pages has no /api/tts */
+      }
+      const dictUrl = await dictionaryAudioUrl(text);
+      if (!dictUrl) continue;
+      try {
+        const clip = await fetch(dictUrl);
+        if (clip.ok) {
+          const blob = await clip.blob();
+          if (blob.size >= 1200) await setCachedAudio(slug, blob);
+        }
+      } catch {
+        /* continue */
       }
     }
   }
@@ -473,19 +660,11 @@ still`;
     els.answer.classList.remove("wrong", "correct");
   }
 
-  function buildQuestions(rawText) {
-    return questionsFromItems(parseWordList(rawText));
-  }
-
   function renderQuestion() {
     const item = state.questions[state.index];
     if (!item) return;
     stopSpeech();
     state.answered = false;
-    els.prompt.textContent = item.translated
-      ? "다음 뜻의 영어 스펠링을 쓰세요"
-      : "다음 영어의 스펠링을 쓰세요";
-    els.sentence.textContent = item.prompt;
     els.feedback.hidden = true;
     if (els.missList) {
       els.missList.hidden = true;
@@ -493,30 +672,34 @@ still`;
     }
     els.nextBtn.hidden = true;
     els.nextBtn.textContent = state.index >= state.questions.length - 1 ? "결과 보기" : "다음";
+    resetAnswerStyle();
+    els.answer.value = "";
     els.answer.disabled = false;
     els.checkBtn.disabled = false;
-    els.answer.value = "";
-    resetAnswerStyle();
     els.form.hidden = false;
     if (els.listenBtn) els.listenBtn.hidden = false;
     setProgress(`${state.index + 1} / ${state.questions.length}`, (state.index + 1) / state.questions.length);
+
+    if (item.type === "meaning") {
+      els.prompt.textContent = "다음 영어의 한국어 뜻을 쓰세요";
+      els.sentence.textContent = item.prompt;
+      els.answer.placeholder = "한국어 뜻 입력";
+      window.setTimeout(() => els.answer.focus(), 50);
+      speakWord(item.answerEn || item.prompt);
+      return;
+    }
+
+    els.prompt.textContent = item.translated
+      ? "다음 뜻의 영어 스펠링을 쓰세요"
+      : "다음 영어의 스펠링을 쓰세요";
+    els.sentence.textContent = item.prompt;
+    els.answer.placeholder = "영어 스펠링 입력";
     window.setTimeout(() => els.answer.focus(), 50);
     speakKorean(item.prompt);
   }
 
-  function checkAnswer(event) {
-    if (event) event.preventDefault();
-    if (state.answered) return;
+  function finishAnswer(correct, typed) {
     const item = state.questions[state.index];
-    const typed = els.answer.value.trim();
-    if (!typed) {
-      els.feedback.hidden = false;
-      els.feedback.textContent = "스펠링을 입력해 주세요.";
-      els.answer.focus();
-      return;
-    }
-    state.answered = true;
-    const correct = normalizeAnswer(typed) === normalizeAnswer(item.answer);
     if (correct) {
       state.score += 1;
     } else {
@@ -526,11 +709,7 @@ still`;
         typed,
       });
     }
-    recordReview(item.answer, correct);
-    els.answer.disabled = true;
-    els.checkBtn.disabled = true;
-    els.answer.classList.toggle("correct", correct);
-    els.answer.classList.toggle("wrong", !correct);
+    recordReview(item.answerEn || item.answer, correct);
     els.feedback.hidden = false;
     if (correct) {
       els.feedback.innerHTML = `정답입니다. (<strong>${item.answer}</strong>)`;
@@ -538,21 +717,49 @@ still`;
       els.feedback.innerHTML = `오답입니다. 입력: <span class="quiz-wrong-spell">${typed}</span> · 정답: <strong>${item.answer}</strong>`;
     }
     els.nextBtn.hidden = false;
-    speakWord(item.answer);
+    if (item.type === "meaning") {
+      speakKorean(item.answer);
+    } else {
+      speakWord(item.answerEn || item.answer);
+    }
   }
 
-  function beginQuiz(questions, reviewMode) {
+  function checkAnswer(event) {
+    if (event) event.preventDefault();
+    if (state.answered) return;
+    const item = state.questions[state.index];
+    if (!item) return;
+    const typed = els.answer.value.trim();
+    if (!typed) {
+      els.feedback.hidden = false;
+      els.feedback.textContent = item.type === "meaning" ? "한국어 뜻을 입력해 주세요." : "스펠링을 입력해 주세요.";
+      els.answer.focus();
+      return;
+    }
+    state.answered = true;
+    const correct =
+      item.type === "meaning"
+        ? koreanMatches(typed, item.answer)
+        : normalizeAnswer(typed) === normalizeAnswer(item.answer);
+    els.answer.disabled = true;
+    els.checkBtn.disabled = true;
+    els.answer.classList.toggle("correct", correct);
+    els.answer.classList.toggle("wrong", !correct);
+    finishAnswer(correct, typed);
+  }
+
+  function beginQuiz(questions, quizType) {
     state.questions = questions;
     state.index = 0;
     state.score = 0;
     state.misses = [];
-    state.reviewMode = Boolean(reviewMode);
+    state.quizType = quizType || "ko";
     els.setupPanel.hidden = true;
     els.playPanel.hidden = false;
     renderQuestion();
   }
 
-  function saveCurrentList() {
+  async function saveCurrentList() {
     const raw = els.text.value.trim();
     if (!raw) {
       if (els.hint) els.hint.textContent = "저장할 단어를 먼저 입력해 주세요.";
@@ -563,44 +770,100 @@ still`;
       if (els.hint) els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
       return;
     }
-    localStorage.setItem(STORAGE_KEY, raw);
-    rememberWords(items);
-    updateMemoryStatus();
-    prefetchAudio(items);
-    if (els.hint) els.hint.textContent = `${items.length}개 단어를 저장했습니다. 같은 브라우저에서 복습할 수 있습니다.`;
-  }
-
-  function startReview() {
-    const due = dueWords();
-    if (!due.length) {
-      if (els.hint) els.hint.textContent = "오늘은 복습할 단어가 없습니다. 새 단어를 저장하거나 퀴즈를 풀어 보세요.";
-      updateMemoryStatus();
+    const saved = rememberWords(items);
+    const cloudOk = await ensureCloud();
+    if (!cloudOk) {
+      if (els.hint) els.hint.textContent = "클라우드에 연결되지 않아 목록을 유지합니다. 연결 후 다시 저장해 주세요.";
+      await updateMemoryStatus();
       return;
     }
-    beginQuiz(questionsFromItems(due), true);
-    prefetchAudio(due);
+    const ok = await window.EchoCloud.upsertWords(saved);
+    if (!ok) {
+      if (els.hint) els.hint.textContent = "클라우드 저장에 실패했습니다. 목록을 유지합니다.";
+      await updateMemoryStatus();
+      return;
+    }
+    // 오른쪽 불러오기 목록이 이미 떠있으면 저장 후에도 즉시 갱신
+    const shouldReload = state.browsing;
+    const reloadPage = state.page;
+
+    els.text.value = "";
+    localStorage.removeItem(STORAGE_KEY);
+    state.page = 0;
+
+    prefetchAudio(items);
+    await updateMemoryStatus();
+
+    if (shouldReload) {
+      await loadWordPage(reloadPage, false);
+    }
+
+    if (els.hint) {
+      els.hint.textContent = `${items.length}개 단어를 클라우드에 저장했습니다. ${
+        shouldReload ? "오른쪽 목록도 즉시 갱신됐습니다." : "불러오기로 20개씩 확인할 수 있습니다."
+      }`;
+    }
   }
 
-  function startQuiz() {
+  async function deleteCurrentList() {
     const raw = els.text.value.trim();
     if (!raw) {
-      if (els.hint) els.hint.textContent = "단어 목록을 입력하거나 예시를 불러와 주세요.";
+      if (els.hint) els.hint.textContent = "삭제할 단어를 왼쪽에 입력해 주세요.";
       return;
     }
-    localStorage.setItem(STORAGE_KEY, raw);
     const items = parseWordList(raw);
-    const questions = questionsFromItems(items);
+    if (!items.length) {
+      if (els.hint) els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
+      return;
+    }
+    if (!window.confirm(`입력한 ${items.length}개 단어를 삭제할까요?`)) return;
+    forgetWords(items);
+    if (await ensureCloud()) {
+      const ok = await window.EchoCloud.deleteWords(items);
+      if (!ok) {
+        if (els.hint) els.hint.textContent = "클라우드 삭제에 실패했습니다. 이 기기에서는 지웠습니다.";
+        await updateMemoryStatus();
+        return;
+      }
+    }
+    els.text.value = "";
+    if (state.browsing) {
+      await loadWordPage(state.page, false);
+    } else {
+      await updateMemoryStatus();
+    }
+    if (els.hint) els.hint.textContent = `${items.length}개 단어를 삭제했습니다.`;
+  }
+
+  async function startQuiz(quizType) {
+    const loadedItems = state.loadedWords && state.loadedWords.length
+      ? state.loadedWords
+      : parseWordList(els.loadedText ? els.loadedText.value.trim() : "");
+    const typedItems = parseWordList(els.text.value.trim());
+    const items = loadedItems.length ? loadedItems : typedItems;
+    if (!items.length) {
+      if (els.hint) els.hint.textContent = "오른쪽에서 불러오거나 왼쪽에 단어를 입력해 주세요.";
+      return;
+    }
+    const mode = quizType === "en" ? "en" : "ko";
+    const questions = mode === "en" ? meaningQuestionsFromItems(items) : questionsFromItems(items);
     if (questions.length < 1) {
       if (els.hint) {
-        els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
+        els.hint.textContent =
+          mode === "en"
+            ? "한국어 뜻이 있는 단어가 없습니다. 뜻을 같이 저장해 주세요."
+            : "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
       }
       setProgress("입력 확인", 0);
       return;
     }
-    rememberWords(items);
+    const saved = rememberWords(items);
+    if (await ensureCloud()) {
+      window.EchoCloud.upsertWords(saved);
+    }
     updateMemoryStatus();
     prefetchAudio(items);
-    beginQuiz(questions, false);
+    beginQuiz(questions, mode);
   }
 
   function showResult() {
@@ -612,15 +875,13 @@ still`;
     if (els.listenBtn) els.listenBtn.hidden = true;
     els.feedback.hidden = false;
     if (state.score === total) {
-      els.feedback.textContent = state.reviewMode
-        ? "오늘 복습을 모두 맞았습니다. 맞은 단어는 며칠 뒤에 다시 나옵니다."
-        : "전부 맞았습니다. 이 단어들은 저장되어 나중에 복습됩니다.";
+      els.feedback.textContent = "전부 맞았습니다.";
       if (els.missList) {
         els.missList.hidden = true;
         els.missList.innerHTML = "";
       }
     } else {
-      els.feedback.textContent = `틀린 단어 ${state.misses.length}개입니다. 이 단어들은 내일 복습에 다시 나옵니다.`;
+      els.feedback.textContent = `틀린 단어 ${state.misses.length}개입니다.`;
       if (els.missList) {
         els.missList.hidden = false;
         els.missList.innerHTML = state.misses
@@ -631,7 +892,7 @@ still`;
           .join("");
       }
     }
-    els.nextBtn.textContent = "목록 수정";
+    els.nextBtn.textContent = "목록으로";
     els.nextBtn.hidden = false;
     els.nextBtn.dataset.done = "1";
     setProgress("완료", 1);
@@ -655,27 +916,37 @@ still`;
     els.nextBtn.dataset.done = "";
     if (els.hint) {
       els.hint.textContent =
-        "단어를 저장해 두면 같은 폰·브라우저에서 복습할 수 있습니다. 틀린 단어는 내일, 맞은 단어는 며칠 뒤에 다시 나옵니다.";
+        "왼쪽에서 단어를 저장·삭제하고, 오른쪽에서 불러온 뒤 퀴즈 종류를 고르세요. 둘 다 주관식입니다.";
     }
     updateMemoryStatus();
   }
 
   async function open() {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) els.text.value = saved;
+    els.text.value = "";
+    if (els.loadedText) els.loadedText.value = "";
+    state.page = 0;
     resetSetup();
     els.view.hidden = false;
-    await syncFromCloud();
+    await ensureCloud();
+    await updateMemoryStatus();
+    // 초기 화면에서 오른쪽 '불러오기' 목록을 바로 표시
+    await loadWordPage(0, false);
   }
 
-  els.sampleBtn.addEventListener("click", () => {
-    els.text.value = SAMPLE;
-    if (els.hint) els.hint.textContent = "예시 목록을 넣었습니다. 저장하거나 퀴즈를 시작해 주세요.";
-  });
-
+  if (els.loadBtn) {
+    els.loadBtn.addEventListener("click", () => loadWordPage(0, true));
+  }
+  if (els.prevPageBtn) {
+    els.prevPageBtn.addEventListener("click", () => loadWordPage(state.page - 1, true));
+  }
+  if (els.nextPageBtn) {
+    els.nextPageBtn.addEventListener("click", () => loadWordPage(state.page + 1, true));
+  }
   if (els.saveBtn) els.saveBtn.addEventListener("click", saveCurrentList);
-  if (els.reviewBtn) els.reviewBtn.addEventListener("click", startReview);
-  els.startBtn.addEventListener("click", startQuiz);
+  if (els.deleteBtn) els.deleteBtn.addEventListener("click", deleteCurrentList);
+  if (els.startKoBtn) els.startKoBtn.addEventListener("click", () => startQuiz("ko"));
+  if (els.startEnBtn) els.startEnBtn.addEventListener("click", () => startQuiz("en"));
+  if (els.startBtn) els.startBtn.addEventListener("click", () => startQuiz("ko"));
   els.form.addEventListener("submit", checkAnswer);
   els.nextBtn.addEventListener("click", () => {
     if (els.nextBtn.dataset.done === "1") {
@@ -687,7 +958,8 @@ still`;
   if (els.listenBtn) {
     els.listenBtn.addEventListener("click", () => {
       const item = state.questions[state.index];
-      if (item) speakWord(item.answer);
+      if (!item) return;
+      speakWord(item.answerEn || item.answer);
     });
   }
 

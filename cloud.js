@@ -43,12 +43,21 @@
     }
   }
 
+  function enKey(text) {
+    return (text || "")
+      .toLowerCase()
+      .replace(/[’`]/g, "'")
+      .replace(/[^a-z0-9'\s-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function rowFromWord(word) {
     return {
       user_id: state.userId,
       en: word.en,
       ko: word.ko || "",
-      en_key: (word.en || "").toLowerCase().replace(/[^a-z0-9'\s-]/g, " ").replace(/\s+/g, " ").trim(),
+      en_key: enKey(word.en),
       streak: word.streak || 0,
       interval_index: word.intervalIndex || 0,
       last_reviewed: word.lastReviewed || 0,
@@ -72,34 +81,79 @@
     };
   }
 
-  async function pullWords() {
-    if (!state.ready) return [];
-    const { data, error } = await state.supabase.from("vocab_words").select("*");
-    if (error || !data) return [];
-    return data.map(wordFromRow);
+  async function countWords() {
+    if (!state.ready) return 0;
+    const { count, error } = await state.supabase
+      .from("vocab_words")
+      .select("*", { count: "exact", head: true });
+    if (error) return 0;
+    return count || 0;
+  }
+
+  async function pullWordsPage(offset, limit) {
+    if (!state.ready) return { words: [], total: 0, error: "not-ready" };
+    const from = Math.max(0, offset);
+    const to = from + Math.max(1, limit) - 1;
+    const { data, error, count } = await state.supabase
+      .from("vocab_words")
+      .select("*", { count: "exact" })
+      .order("updated_at", { ascending: false })
+      .range(from, to);
+    if (error) {
+      state.error = "불러오기 실패";
+      return { words: [], total: 0, error: error.message || "불러오기 실패" };
+    }
+    const rows = data || [];
+    return { words: rows.map(wordFromRow), total: count ?? rows.length };
   }
 
   async function upsertWord(word) {
-    if (!state.ready) return;
+    if (!state.ready) return false;
     const { error } = await state.supabase.from("vocab_words").upsert(rowFromWord(word), {
       onConflict: "user_id,en_key",
     });
-    if (error) state.error = "저장 실패";
+    if (error) {
+      state.error = "저장 실패";
+      return false;
+    }
+    return true;
   }
 
   async function upsertWords(words) {
-    if (!state.ready || !words.length) return;
+    if (!state.ready || !words.length) return false;
     const { error } = await state.supabase.from("vocab_words").upsert(words.map(rowFromWord), {
       onConflict: "user_id,en_key",
     });
-    if (error) state.error = "저장 실패";
+    if (error) {
+      state.error = "저장 실패";
+      return false;
+    }
+    return true;
+  }
+
+  async function deleteWords(words) {
+    if (!state.ready || !words.length) return false;
+    const keys = words.map((word) => enKey(word.en || word)).filter(Boolean);
+    if (!keys.length) return false;
+    const { error } = await state.supabase
+      .from("vocab_words")
+      .delete()
+      .eq("user_id", state.userId)
+      .in("en_key", keys);
+    if (error) {
+      state.error = "삭제 실패";
+      return false;
+    }
+    return true;
   }
 
   window.EchoCloud = {
     init,
-    pullWords,
+    countWords,
+    pullWordsPage,
     upsertWord,
     upsertWords,
+    deleteWords,
     statusText,
     isReady: () => state.ready,
   };
