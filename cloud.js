@@ -7,6 +7,8 @@
     error: "",
     provider: "",
     userLabel: "",
+    noPoolColumn: false,
+    lastError: "",
   };
 
   function redirectTo() {
@@ -17,6 +19,7 @@
   }
 
   function statusText() {
+    if (state.lastError) return state.lastError;
     if (state.ready && state.provider === "github") {
       return state.userLabel ? `공유 목록 · ${state.userLabel}` : "공유 목록 · GitHub";
     }
@@ -102,8 +105,8 @@
       .trim();
   }
 
-  function rowFromWord(word) {
-    return {
+  function rowFromWord(word, withPool) {
+    const row = {
       user_id: state.userId,
       en: word.en,
       ko: word.ko || "",
@@ -116,12 +119,17 @@
       correct_count: word.correctCount || 0,
       updated_at: new Date().toISOString(),
     };
+    if (withPool !== false && !state.noPoolColumn) {
+      row.pool_id = Number(word.poolId) > 0 ? Number(word.poolId) : 1;
+    }
+    return row;
   }
 
   function wordFromRow(row) {
     return {
       en: row.en,
       ko: row.ko || "",
+      poolId: Number(row.pool_id) || 1,
       streak: row.streak || 0,
       intervalIndex: row.interval_index || 0,
       lastReviewed: Number(row.last_reviewed) || 0,
@@ -129,6 +137,45 @@
       wrongCount: row.wrong_count || 0,
       correctCount: row.correct_count || 0,
     };
+  }
+
+  function markMissingPool(error) {
+    const msg = (error && error.message) || "";
+    if (/column .*pool_id|pool_id.*does not exist|Could not find the 'pool_id' column/i.test(msg)) {
+      state.noPoolColumn = true;
+    }
+    return msg;
+  }
+
+  async function listPools() {
+    if (!state.ready) return [];
+    if (state.noPoolColumn) {
+      const count = await countWords();
+      return count ? [1] : [];
+    }
+    const { data, error } = await state.supabase
+      .from("vocab_words")
+      .select("pool_id")
+      .order("pool_id", { ascending: true });
+    if (error) {
+      markMissingPool(error);
+      if (state.noPoolColumn) {
+        const count = await countWords();
+        return count ? [1] : [];
+      }
+      return [];
+    }
+    const ids = [];
+    (data || []).forEach((row) => {
+      const id = Number(row.pool_id) || 1;
+      if (!ids.includes(id)) ids.push(id);
+    });
+    return ids;
+  }
+
+  async function nextPoolId() {
+    const ids = await listPools();
+    return ids.length ? Math.max(...ids) + 1 : 1;
   }
 
   async function countWords() {
@@ -140,52 +187,75 @@
     return count || 0;
   }
 
-  async function pullWordsPage(offset, limit) {
-    if (!state.ready) return { words: [], total: 0, error: "not-ready" };
-    const from = Math.max(0, offset);
-    const to = from + Math.max(1, limit) - 1;
-    const { data, error, count } = await state.supabase
-      .from("vocab_words")
-      .select("*", { count: "exact" })
-      .order("updated_at", { ascending: false })
-      .range(from, to);
+  async function pullPool(poolId) {
+    if (!state.ready) return { words: [], poolId, error: "not-ready" };
+    const id = Number(poolId) || 1;
+    let query = state.supabase.from("vocab_words").select("*").order("updated_at", { ascending: true });
+    if (!state.noPoolColumn) query = query.eq("pool_id", id);
+    const { data, error } = await query;
     if (error) {
+      markMissingPool(error);
+      if (state.noPoolColumn) return pullPool(1);
       state.error = "불러오기 실패";
-      return { words: [], total: 0, error: error.message || "불러오기 실패" };
+      return { words: [], poolId: id, error: error.message || "불러오기 실패" };
     }
-    const rows = data || [];
-    return { words: rows.map(wordFromRow), total: count ?? rows.length };
+    return { words: (data || []).map(wordFromRow), poolId: state.noPoolColumn ? 1 : id };
+  }
+
+  function failSave(error) {
+    const msg = (error && error.message) || "알 수 없는 오류";
+    state.lastError = `저장 실패: ${msg}`;
+    state.error = state.lastError;
+    return false;
+  }
+
+  async function writeRows(rows) {
+    const conflicts = [];
+    if (!state.noPoolColumn) conflicts.push("pool_id,en_key");
+    conflicts.push("en_key");
+    let lastError = null;
+    for (const onConflict of conflicts) {
+      const { error } = await state.supabase.from("vocab_words").upsert(rows, { onConflict });
+      if (!error) {
+        state.lastError = "";
+        return true;
+      }
+      lastError = error;
+      markMissingPool(error);
+      if (state.noPoolColumn) {
+        rows.forEach((row) => {
+          delete row.pool_id;
+        });
+      }
+    }
+    const inserted = await state.supabase.from("vocab_words").insert(rows);
+    if (!inserted.error) {
+      state.lastError = "";
+      return true;
+    }
+    return failSave(inserted.error || lastError);
   }
 
   async function upsertWord(word) {
     if (!state.ready) return false;
-    const { error } = await state.supabase.from("vocab_words").upsert(rowFromWord(word), {
-      onConflict: "en_key",
-    });
-    if (error) {
-      state.error = "저장 실패";
-      return false;
-    }
-    return true;
+    return writeRows([rowFromWord(word, !state.noPoolColumn)]);
   }
 
-  async function upsertWords(words) {
+  async function upsertWords(words, poolId) {
     if (!state.ready || !words.length) return false;
-    const { error } = await state.supabase.from("vocab_words").upsert(words.map(rowFromWord), {
-      onConflict: "en_key",
-    });
-    if (error) {
-      state.error = "저장 실패";
-      return false;
-    }
-    return true;
+    const id = state.noPoolColumn ? 1 : Number(poolId) > 0 ? Number(poolId) : await nextPoolId();
+    const rows = words.map((word) => rowFromWord({ ...word, poolId: id }, !state.noPoolColumn));
+    const ok = await writeRows(rows);
+    return ok ? id : false;
   }
 
-  async function deleteWords(words) {
+  async function deleteWords(words, poolId) {
     if (!state.ready || !words.length) return false;
     const keys = words.map((word) => enKey(word.en || word)).filter(Boolean);
     if (!keys.length) return false;
-    const { error } = await state.supabase.from("vocab_words").delete().in("en_key", keys);
+    let query = state.supabase.from("vocab_words").delete().in("en_key", keys);
+    if (Number(poolId) > 0) query = query.eq("pool_id", Number(poolId));
+    const { error } = await query;
     if (error) {
       state.error = "삭제 실패";
       return false;
@@ -198,11 +268,14 @@
     signInWithGitHub,
     signOut,
     countWords,
-    pullWordsPage,
+    listPools,
+    nextPoolId,
+    pullPool,
     upsertWord,
     upsertWords,
     deleteWords,
     statusText,
+    lastError: () => state.lastError,
     isReady: () => state.ready,
     isGitHub: () => state.provider === "github",
   };

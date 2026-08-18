@@ -773,6 +773,20 @@ main {
   font-weight: 600;
 }
 
+.quiz-pool-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0 0 0.75rem;
+  min-height: 2.4rem;
+}
+
+.quiz-pool-btns .btn.selected {
+  background: var(--ink);
+  color: #f4faf8;
+  border-color: var(--ink);
+}
+
 .quiz-listen {
   margin: 0 0 1rem;
 }

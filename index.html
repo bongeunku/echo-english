@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=26" />
+    <link rel="stylesheet" href="./styles.css?v=29" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -73,7 +73,7 @@
           <article class="card-stage quiz-card">
             <h2 class="quiz-title">단어 스펠링 퀴즈</h2>
             <p class="hint" id="quiz-setup-hint">
-              GitHub로 로그인하면 다른 컴퓨터에서도 같은 단어 목록을 씁니다. 저장한 단어는 모든 사용자가 이용합니다.
+              GitHub로 로그인하면 다른 컴퓨터에서도 같은 풀을 씁니다. 저장할 때마다 1, 2, 3번 풀이 생깁니다.
             </p>
             <p class="voice-note" id="quiz-memory-status">저장된 단어 0개</p>
             <div class="cta-row quiz-auth-row">
@@ -95,22 +95,15 @@
                 </div>
               </section>
               <section class="quiz-pane quiz-pane-load">
-                <h3 class="quiz-pane-title">불러오기</h3>
-                <label class="quiz-text-label" for="quiz-loaded-text">저장된 단어</label>
+                <h3 class="quiz-pane-title">단어 풀</h3>
+                <div class="quiz-pool-btns" id="quiz-pool-btns"></div>
+                <label class="quiz-text-label" for="quiz-loaded-text">선택한 풀의 단어</label>
                 <textarea
                   id="quiz-loaded-text"
                   rows="10"
                   readonly
-                  placeholder="불러오기를 누르면 여기에 표시됩니다."
+                  placeholder="풀 번호를 누르면 여기에 표시됩니다."
                 ></textarea>
-                <div class="cta-row quiz-pane-actions">
-                  <button class="btn ghost" id="quiz-load-btn" type="button">불러오기</button>
-                </div>
-                <div class="quiz-pager" id="quiz-pager" hidden>
-                  <button class="btn ghost small" id="quiz-prev-page-btn" type="button">이전</button>
-                  <span id="quiz-page-label">1 / 1</span>
-                  <button class="btn ghost small" id="quiz-next-page-btn" type="button">다음</button>
-                </div>
               </section>
             </div>
             <div class="cta-row quiz-start-row">
@@ -229,10 +222,10 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="./config.js?v=26"></script>
-    <script src="./cloud.js?v=26"></script>
-    <script src="./data.js?v=26"></script>
-    <script src="./quiz.js?v=26"></script>
-    <script src="./app.js?v=26"></script>
+    <script src="./config.js?v=29"></script>
+    <script src="./cloud.js?v=29"></script>
+    <script src="./data.js?v=29"></script>
+    <script src="./quiz.js?v=29"></script>
+    <script src="./app.js?v=29"></script>
   </body>
 </html>

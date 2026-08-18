@@ -16,6 +16,7 @@ create table if not exists public.vocab_words (
   en text not null,
   ko text not null default '',
   en_key text not null,
+  pool_id integer not null default 1,
   streak integer not null default 0,
   interval_index integer not null default 0,
   last_reviewed bigint not null default 0,
@@ -36,14 +37,19 @@ where a.en_key = b.en_key
   and a.updated_at = b.updated_at
   and a.id < b.id;
 
+create index if not exists vocab_words_updated_at_idx
+  on public.vocab_words (updated_at desc);
+
+alter table public.vocab_words add column if not exists pool_id integer not null default 1;
+update public.vocab_words set pool_id = 1 where pool_id is null or pool_id < 1;
+
 alter table public.vocab_words drop constraint if exists vocab_words_user_id_en_key_key;
 alter table public.vocab_words drop constraint if exists vocab_words_en_key_key;
 drop index if exists vocab_words_user_id_en_key_key;
 drop index if exists vocab_words_en_key_uidx;
-alter table public.vocab_words add constraint vocab_words_en_key_key unique (en_key);
-
-create index if not exists vocab_words_updated_at_idx
-  on public.vocab_words (updated_at desc);
+alter table public.vocab_words drop constraint if exists vocab_words_pool_en_key_key;
+alter table public.vocab_words add constraint vocab_words_pool_en_key_key unique (pool_id, en_key);
+create index if not exists vocab_words_pool_id_idx on public.vocab_words (pool_id);
 
 alter table public.vocab_words enable row level security;
 

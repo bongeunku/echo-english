@@ -2,7 +2,6 @@
   const STORAGE_KEY = "echo-quiz-list-v1";
   const MEMORY_KEY = "echo-quiz-memory-v1";
   const INTERVALS = [1, 3, 7, 14, 30];
-  const PAGE_SIZE = 20;
 
   const MEANINGS = {
     apart: "떨어져, 따로",
@@ -34,15 +33,11 @@
     memoryStatus: document.getElementById("quiz-memory-status"),
     text: document.getElementById("quiz-text"),
     loadedText: document.getElementById("quiz-loaded-text"),
-    loadBtn: document.getElementById("quiz-load-btn"),
+    poolBtns: document.getElementById("quiz-pool-btns"),
     saveBtn: document.getElementById("quiz-save-btn"),
     deleteBtn: document.getElementById("quiz-delete-btn"),
     githubBtn: document.getElementById("quiz-github-btn"),
     logoutBtn: document.getElementById("quiz-logout-btn"),
-    pager: document.getElementById("quiz-pager"),
-    pageLabel: document.getElementById("quiz-page-label"),
-    prevPageBtn: document.getElementById("quiz-prev-page-btn"),
-    nextPageBtn: document.getElementById("quiz-next-page-btn"),
     startKoBtn: document.getElementById("quiz-start-ko-btn"),
     startEnBtn: document.getElementById("quiz-start-en-btn"),
     startBtn: document.getElementById("quiz-start-btn"),
@@ -64,9 +59,8 @@
     answered: false,
     audio: null,
     misses: [],
-    page: 0,
-    total: 0,
-    browsing: false,
+    poolId: 0,
+    pools: [],
     loadedWords: [],
     quizType: "ko",
   };
@@ -97,7 +91,7 @@
   function takeVocab(text) {
     const cleaned = (text || "")
       .replace(/[가-힣]+/g, " ")
-      .replace(/[*_]/g, " ")
+      .replace(/[()（）[*_]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
     const words = cleaned.split(/\s+/).filter(Boolean);
@@ -117,6 +111,13 @@
   function parseLine(line) {
     const trimmed = line.trim();
     if (!trimmed || SKIP_HEADINGS.test(trimmed)) return null;
+
+    const paren = trimmed.match(/^([A-Za-z][A-Za-z' -]{0,40}?)\s*[\(（]\s*([^)）]+)\s*[\)）]\s*$/);
+    if (paren) {
+      const en = takeVocab(paren[1]) || paren[1].trim();
+      const ko = extractHangul(paren[2]) || paren[2].replace(/[()（）]/g, "").trim();
+      if (en) return { en, ko };
+    }
 
     const numbered = trimmed.match(/^\s*(\d{1,2})[.):\-]?\s+(.+)$/);
     if (numbered) {
@@ -160,10 +161,25 @@
     return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   }
 
+  function memoryKey(en, poolId) {
+    return `${Number(poolId) > 0 ? Number(poolId) : 1}:${normalizeAnswer(en)}`;
+  }
+
   function loadMemory() {
     try {
       const data = JSON.parse(localStorage.getItem(MEMORY_KEY) || "{}");
-      return data.words && typeof data.words === "object" ? data : { words: {} };
+      if (!data.words || typeof data.words !== "object") return { words: {} };
+      const next = { words: {} };
+      Object.entries(data.words).forEach(([key, word]) => {
+        if (!word) return;
+        if (String(key).includes(":")) {
+          next.words[key] = { ...word, poolId: word.poolId || Number(String(key).split(":")[0]) || 1 };
+          return;
+        }
+        const poolId = word.poolId || 1;
+        next.words[memoryKey(word.en || key, poolId)] = { ...word, poolId };
+      });
+      return next;
     } catch {
       return { words: {} };
     }
@@ -173,14 +189,16 @@
     localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
   }
 
-  function rememberWords(items) {
+  function rememberWords(items, poolId) {
+    const id = Number(poolId) > 0 ? Number(poolId) : 1;
     const memory = loadMemory();
     items.forEach((item) => {
-      const key = normalizeAnswer(item.en);
+      const key = memoryKey(item.en, id);
       const existing = memory.words[key] || {};
       memory.words[key] = {
         en: item.en,
         ko: item.ko || existing.ko || lookupMeaning(item.en),
+        poolId: id,
         streak: existing.streak || 0,
         intervalIndex: existing.intervalIndex || 0,
         lastReviewed: existing.lastReviewed || 0,
@@ -191,24 +209,37 @@
       };
     });
     saveMemory(memory);
-    return Object.values(memory.words).filter((word) =>
-      items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))
+    return Object.values(memory.words).filter(
+      (word) => word.poolId === id && items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))
     );
   }
 
-  function forgetWords(items) {
+  function forgetWords(items, poolId) {
     const memory = loadMemory();
     items.forEach((item) => {
-      delete memory.words[normalizeAnswer(item.en)];
+      if (Number(poolId) > 0) {
+        delete memory.words[memoryKey(item.en, poolId)];
+        return;
+      }
+      Object.keys(memory.words).forEach((key) => {
+        if (normalizeAnswer(memory.words[key].en) === normalizeAnswer(item.en)) {
+          delete memory.words[key];
+        }
+      });
     });
     saveMemory(memory);
   }
 
   function recordReview(answer, correct) {
-    const key = normalizeAnswer(answer);
     const memory = loadMemory();
-    const word = memory.words[key];
-    if (!word) return;
+    const wanted = normalizeAnswer(answer);
+    const entry = Object.entries(memory.words).find(([key, word]) => {
+      if (normalizeAnswer(word.en) !== wanted) return false;
+      if (state.poolId) return (Number(word.poolId) || 1) === state.poolId || key.startsWith(`${state.poolId}:`);
+      return true;
+    });
+    if (!entry) return;
+    const word = entry[1];
     const today = todayStamp();
     word.lastReviewed = today;
     if (correct) {
@@ -222,7 +253,7 @@
       word.intervalIndex = 0;
       word.nextReview = today + INTERVALS[0] * 24 * 60 * 60 * 1000;
     }
-    memory.words[key] = word;
+    memory.words[entry[0]] = word;
     saveMemory(memory);
     if (window.EchoCloud && window.EchoCloud.isReady()) {
       window.EchoCloud.upsertWord(word);
@@ -233,30 +264,40 @@
     return Object.values(loadMemory().words).sort((a, b) => (b.updatedAt || b.lastReviewed || 0) - (a.updatedAt || a.lastReviewed || 0));
   }
 
+  function localPoolIds() {
+    const ids = [];
+    Object.values(loadMemory().words).forEach((word) => {
+      const id = Number(word.poolId) || 1;
+      if (!ids.includes(id)) ids.push(id);
+    });
+    return ids.sort((a, b) => a - b);
+  }
+
+  function localPoolWords(poolId) {
+    const id = Number(poolId) || 1;
+    return Object.values(loadMemory().words)
+      .filter((word) => (Number(word.poolId) || 1) === id)
+      .sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  }
+
   function formatWordLine(word) {
     return word.ko ? `${word.en} - ${word.ko}` : word.en;
   }
 
-  function mergeRemoteIntoMemory(words) {
+  function mergeRemoteIntoMemory(words, poolId) {
     if (!words || !words.length) return;
+    const id = Number(poolId) || Number(words[0].poolId) || 1;
     const memory = loadMemory();
     words.forEach((word) => {
-      const key = normalizeAnswer(word.en);
+      const key = memoryKey(word.en, word.poolId || id);
       if (!key) return;
       memory.words[key] = {
         ...(memory.words[key] || {}),
         ...word,
+        poolId: word.poolId || id,
       };
     });
     saveMemory(memory);
-  }
-
-  function pageFromList(list, page) {
-    const offset = page * PAGE_SIZE;
-    return {
-      words: list.slice(offset, offset + PAGE_SIZE),
-      total: list.length,
-    };
   }
 
   async function storedCount() {
@@ -268,31 +309,39 @@
     return local;
   }
 
+  function renderPoolButtons(ids) {
+    state.pools = ids || [];
+    if (!els.poolBtns) return;
+    if (!state.pools.length) {
+      els.poolBtns.innerHTML = '<span class="quiz-text-label">저장된 풀이 없습니다.</span>';
+      return;
+    }
+    els.poolBtns.innerHTML = state.pools
+      .map(
+        (id) =>
+          `<button type="button" class="btn ghost small${Number(id) === Number(state.poolId) ? " selected" : ""}" data-pool="${id}">${id}</button>`
+      )
+      .join("");
+  }
+
+  async function refreshPools() {
+    let ids = [];
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      ids = await window.EchoCloud.listPools();
+    }
+    if (!ids.length) ids = localPoolIds();
+    renderPoolButtons(ids);
+    return ids;
+  }
+
   async function updateMemoryStatus() {
     if (!els.memoryStatus) return;
     const count = await storedCount();
-    state.total = count;
     const cloud = window.EchoCloud ? window.EchoCloud.statusText() : "이 기기에만 저장";
-    els.memoryStatus.textContent = `저장된 단어 ${count}개 · ${cloud}`;
+    const poolText = state.poolId ? ` · 풀 ${state.poolId}` : "";
+    els.memoryStatus.textContent = `저장된 단어 ${count}개${poolText} · ${cloud}`;
     if (els.githubBtn) els.githubBtn.hidden = Boolean(window.EchoCloud && window.EchoCloud.isGitHub && window.EchoCloud.isGitHub());
     if (els.logoutBtn) els.logoutBtn.hidden = !(window.EchoCloud && window.EchoCloud.isGitHub && window.EchoCloud.isGitHub());
-    updatePager();
-  }
-
-  function pageCount() {
-    return Math.max(1, Math.ceil((state.total || 0) / PAGE_SIZE));
-  }
-
-  function updatePager() {
-    if (!els.pager) return;
-    const total = state.total || 0;
-    const pages = pageCount();
-    const page = Math.min(state.page, pages - 1);
-    state.page = Math.max(0, page);
-    els.pager.hidden = !state.browsing || total <= 0;
-    if (els.pageLabel) els.pageLabel.textContent = `${state.page + 1} / ${pages}`;
-    if (els.prevPageBtn) els.prevPageBtn.disabled = state.page <= 0;
-    if (els.nextPageBtn) els.nextPageBtn.disabled = state.page >= pages - 1 || total <= PAGE_SIZE;
   }
 
   async function ensureCloud() {
@@ -301,68 +350,46 @@
     return window.EchoCloud.init();
   }
 
-  async function fetchWordPage(page) {
-    const local = localWordList();
-    if (window.EchoCloud && window.EchoCloud.isReady()) {
-      const remote = await window.EchoCloud.pullWordsPage(page * PAGE_SIZE, PAGE_SIZE);
-      if (!remote.error && (remote.total > 0 || remote.words.length)) {
-        mergeRemoteIntoMemory(remote.words);
-        return { ...remote, source: "cloud" };
-      }
-      if (local.length) {
-        if (!remote.error) {
-          await window.EchoCloud.upsertWords(local);
-          const uploaded = await window.EchoCloud.pullWordsPage(page * PAGE_SIZE, PAGE_SIZE);
-          if (!uploaded.error && (uploaded.total > 0 || uploaded.words.length)) {
-            mergeRemoteIntoMemory(uploaded.words);
-            return { ...uploaded, source: "cloud" };
-          }
-        }
-        return { ...pageFromList(local, page), source: "local" };
-      }
-      return { words: [], total: 0, source: remote.error ? "error" : "cloud" };
-    }
-    return { ...pageFromList(local, page), source: "local" };
-  }
-
-  async function loadWordPage(page, announce) {
+  async function loadPool(poolId, announce) {
     await ensureCloud();
-    const nextPage = Math.max(0, page);
-    const result = await fetchWordPage(nextPage);
-    state.total = result.total;
-    const pages = Math.max(1, Math.ceil((result.total || 0) / PAGE_SIZE));
-    if (result.total && nextPage >= pages) {
-      return loadWordPage(pages - 1, announce);
-    }
-    state.page = nextPage;
-    state.browsing = true;
-    if (!result.words.length) {
+    const id = Number(poolId) || 0;
+    if (!id) {
+      state.poolId = 0;
       state.loadedWords = [];
       if (els.loadedText) els.loadedText.value = "";
-      updatePager();
+      await refreshPools();
       await updateMemoryStatus();
-      if (announce && els.hint) {
-        els.hint.textContent = window.EchoCloud && window.EchoCloud.isReady()
-          ? "이 계정에 저장된 단어가 없습니다. 왼쪽에 입력한 뒤 저장해 주세요."
-          : "저장된 단어가 없습니다. 왼쪽에 입력한 뒤 저장해 주세요.";
-      }
       return;
     }
-    state.loadedWords = result.words;
-    if (els.loadedText) els.loadedText.value = result.words.map(formatWordLine).join("\n");
-    updatePager();
+    let words = [];
+    let source = "local";
+    if (window.EchoCloud && window.EchoCloud.isReady()) {
+      const remote = await window.EchoCloud.pullPool(id);
+      if (!remote.error && remote.words.length) {
+        mergeRemoteIntoMemory(remote.words, id);
+        words = remote.words;
+        source = "cloud";
+      }
+    }
+    if (!words.length) words = localPoolWords(id);
+    state.poolId = id;
+    state.loadedWords = words;
+    if (els.loadedText) els.loadedText.value = words.map(formatWordLine).join("\n");
+    await refreshPools();
     await updateMemoryStatus();
-    prefetchAudio(result.words);
+    if (words.length) prefetchAudio(words);
     if (announce && els.hint) {
-      const start = nextPage * PAGE_SIZE + 1;
-      const end = nextPage * PAGE_SIZE + result.words.length;
-      const where = result.source === "local" ? "이 기기에서" : "클라우드에서";
-      els.hint.textContent = `${where} ${start}–${end}번째 단어 ${result.words.length}개를 불러왔습니다.`;
+      if (!words.length) {
+        els.hint.textContent = `${id}번 풀에 단어가 없습니다.`;
+        return;
+      }
+      const where = source === "cloud" ? "클라우드" : "이 기기";
+      els.hint.textContent = `${where} ${id}번 풀 단어 ${words.length}개를 열었습니다.`;
     }
   }
 
   function questionsFromItems(items) {
-    return items.slice(0, PAGE_SIZE).map((item) => {
+    return items.map((item) => {
       const ko = item.ko || lookupMeaning(item.en);
       return {
         type: "spelling",
@@ -380,7 +407,6 @@
 
   function meaningQuestionsFromItems(items) {
     return items
-      .slice(0, PAGE_SIZE)
       .map((item) => {
         const ko = wordKo(item);
         if (!ko) return null;
@@ -618,7 +644,7 @@
   }
 
   async function prefetchAudio(items) {
-    const list = (items || []).slice(0, PAGE_SIZE);
+    const list = items || [];
     for (const item of list) {
       const text = item.en || item.answer;
       if (!text) continue;
@@ -774,38 +800,36 @@
       if (els.hint) els.hint.textContent = "목록을 읽지 못했습니다. 영어 단어를 한 줄에 하나씩 적어 주세요.";
       return;
     }
-    const saved = rememberWords(items);
     const cloudOk = await ensureCloud();
     if (!cloudOk) {
-      if (els.hint) els.hint.textContent = "클라우드에 연결되지 않아 목록을 유지합니다. 연결 후 다시 저장해 주세요.";
-      await updateMemoryStatus();
+      const localId = (localPoolIds().pop() || 0) + 1;
+      rememberWords(items, localId);
+      if (els.hint) els.hint.textContent = `${localId}번 풀에 이 기기에만 저장했습니다. 연결 후 다시 저장해 주세요.`;
+      await refreshPools();
+      await loadPool(localId, false);
       return;
     }
-    const ok = await window.EchoCloud.upsertWords(saved);
+    const poolId = await window.EchoCloud.nextPoolId();
+    const pooled = rememberWords(items, poolId);
+    const ok = await window.EchoCloud.upsertWords(pooled, poolId);
     if (!ok) {
-      if (els.hint) els.hint.textContent = "클라우드 저장에 실패했습니다. 목록을 유지합니다.";
+      if (els.hint) {
+        els.hint.textContent =
+          (window.EchoCloud.lastError && window.EchoCloud.lastError()) ||
+          window.EchoCloud.statusText() ||
+          "클라우드 저장에 실패했습니다. 목록을 유지합니다.";
+      }
       await updateMemoryStatus();
       return;
     }
-    // 오른쪽 불러오기 목록이 이미 떠있으면 저장 후에도 즉시 갱신
-    const shouldReload = state.browsing;
-    const reloadPage = state.page;
 
     els.text.value = "";
     localStorage.removeItem(STORAGE_KEY);
-    state.page = 0;
-
     prefetchAudio(items);
-    await updateMemoryStatus();
-
-    if (shouldReload) {
-      await loadWordPage(reloadPage, false);
-    }
+    await loadPool(poolId, false);
 
     if (els.hint) {
-      els.hint.textContent = `${items.length}개 단어를 클라우드에 저장했습니다. ${
-        shouldReload ? "오른쪽 목록도 즉시 갱신됐습니다." : "불러오기로 20개씩 확인할 수 있습니다."
-      }`;
+      els.hint.textContent = `${items.length}개 단어를 ${poolId}번 풀에 저장했습니다.`;
     }
   }
 
@@ -821,9 +845,9 @@
       return;
     }
     if (!window.confirm(`입력한 ${items.length}개 단어를 삭제할까요?`)) return;
-    forgetWords(items);
+    forgetWords(items, state.poolId);
     if (await ensureCloud()) {
-      const ok = await window.EchoCloud.deleteWords(items);
+      const ok = await window.EchoCloud.deleteWords(items, state.poolId);
       if (!ok) {
         if (els.hint) els.hint.textContent = "클라우드 삭제에 실패했습니다. 이 기기에서는 지웠습니다.";
         await updateMemoryStatus();
@@ -831,9 +855,15 @@
       }
     }
     els.text.value = "";
-    if (state.browsing) {
-      await loadWordPage(state.page, false);
+    const ids = await refreshPools();
+    if (state.poolId && ids.includes(state.poolId)) {
+      await loadPool(state.poolId, false);
+    } else if (ids.length) {
+      await loadPool(ids[0], false);
     } else {
+      state.poolId = 0;
+      state.loadedWords = [];
+      if (els.loadedText) els.loadedText.value = "";
       await updateMemoryStatus();
     }
     if (els.hint) els.hint.textContent = `${items.length}개 단어를 삭제했습니다.`;
@@ -846,7 +876,7 @@
     const typedItems = parseWordList(els.text.value.trim());
     const items = loadedItems.length ? loadedItems : typedItems;
     if (!items.length) {
-      if (els.hint) els.hint.textContent = "오른쪽에서 불러오거나 왼쪽에 단어를 입력해 주세요.";
+      if (els.hint) els.hint.textContent = "오른쪽 풀 번호를 누르거나 왼쪽에 단어를 입력해 주세요.";
       return;
     }
     const mode = quizType === "en" ? "en" : "ko";
@@ -861,9 +891,9 @@
       setProgress("입력 확인", 0);
       return;
     }
-    const saved = rememberWords(items);
-    if (await ensureCloud()) {
-      window.EchoCloud.upsertWords(saved);
+    const saved = rememberWords(items, state.poolId || 1);
+    if (await ensureCloud() && state.poolId) {
+      window.EchoCloud.upsertWords(saved, state.poolId);
     }
     updateMemoryStatus();
     prefetchAudio(items);
@@ -920,7 +950,7 @@
     els.nextBtn.dataset.done = "";
     if (els.hint) {
       els.hint.textContent =
-        "GitHub로 로그인하면 다른 컴퓨터에서도 같은 단어 목록을 씁니다. 저장한 단어는 모든 사용자가 이용합니다.";
+        "왼쪽에서 저장하면 1, 2, 3번 풀로 쌓입니다. 오른쪽 번호를 눌러 그 풀로 퀴즈를 시작하세요.";
     }
     updateMemoryStatus();
   }
@@ -928,23 +958,22 @@
   async function open() {
     els.text.value = "";
     if (els.loadedText) els.loadedText.value = "";
-    state.page = 0;
+    state.poolId = 0;
+    state.loadedWords = [];
     resetSetup();
     els.view.hidden = false;
     await ensureCloud();
+    const ids = await refreshPools();
     await updateMemoryStatus();
-    // 초기 화면에서 오른쪽 '불러오기' 목록을 바로 표시
-    await loadWordPage(0, false);
+    if (ids.length) await loadPool(ids[0], false);
   }
 
-  if (els.loadBtn) {
-    els.loadBtn.addEventListener("click", () => loadWordPage(0, true));
-  }
-  if (els.prevPageBtn) {
-    els.prevPageBtn.addEventListener("click", () => loadWordPage(state.page - 1, true));
-  }
-  if (els.nextPageBtn) {
-    els.nextPageBtn.addEventListener("click", () => loadWordPage(state.page + 1, true));
+  if (els.poolBtns) {
+    els.poolBtns.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-pool]");
+      if (!btn) return;
+      loadPool(Number(btn.dataset.pool), true);
+    });
   }
   if (els.saveBtn) els.saveBtn.addEventListener("click", saveCurrentList);
   if (els.deleteBtn) els.deleteBtn.addEventListener("click", deleteCurrentList);
@@ -960,7 +989,8 @@
       if (!window.EchoCloud || !window.EchoCloud.signOut) return;
       await window.EchoCloud.signOut();
       await updateMemoryStatus();
-      await loadWordPage(0, false);
+      const ids = await refreshPools();
+      if (ids.length) await loadPool(ids[0], false);
     });
   }
   if (els.startKoBtn) els.startKoBtn.addEventListener("click", () => startQuiz("ko"));
