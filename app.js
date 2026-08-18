@@ -591,7 +591,13 @@
 
   const quizBackBtn = document.getElementById("quiz-back-btn");
   if (quizBackBtn) {
-    quizBackBtn.addEventListener("click", goToTopics);
+    quizBackBtn.addEventListener("click", () => {
+      if (window.EchoQuiz && window.EchoQuiz.showSetup) {
+        window.EchoQuiz.showSetup();
+        return;
+      }
+      goToTopics();
+    });
   }
   renderTopics();
   syncContinueButton();

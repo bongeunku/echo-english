@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=29" />
+    <link rel="stylesheet" href="./styles.css?v=36" />
   </head>
   <body>
     <div class="noise" aria-hidden="true"></div>
@@ -57,7 +57,7 @@
 
       <section class="quiz" id="quiz-view" hidden>
         <div class="practice-bar">
-          <button class="btn text" id="quiz-back-btn" type="button">← 주제</button>
+          <button class="btn text" id="quiz-back-btn" type="button">← 퀴즈</button>
           <div class="progress-wrap">
             <div class="progress-meta">
               <span>스펠링 퀴즈</span>
@@ -80,41 +80,43 @@
               <button class="btn ghost small" id="quiz-github-btn" type="button">GitHub로 로그인</button>
               <button class="btn text small" id="quiz-logout-btn" type="button" hidden>로그아웃</button>
             </div>
-            <div class="quiz-split">
-              <section class="quiz-pane quiz-pane-save">
-                <h3 class="quiz-pane-title">단어 저장 · 삭제</h3>
-                <label class="quiz-text-label" for="quiz-text">새 단어 (한 줄에 하나)</label>
-                <textarea
-                  id="quiz-text"
-                  rows="10"
-                  placeholder="apart&#10;break up&#10;continent"
-                ></textarea>
-                <div class="cta-row quiz-pane-actions">
-                  <button class="btn ghost" id="quiz-save-btn" type="button">단어 저장</button>
-                  <button class="btn ghost danger" id="quiz-delete-btn" type="button">단어 삭제</button>
-                </div>
-              </section>
+            <div class="quiz-stack">
               <section class="quiz-pane quiz-pane-load">
-                <h3 class="quiz-pane-title">단어 풀</h3>
                 <div class="quiz-pool-btns" id="quiz-pool-btns"></div>
-                <label class="quiz-text-label" for="quiz-loaded-text">선택한 풀의 단어</label>
                 <textarea
                   id="quiz-loaded-text"
-                  rows="10"
+                  rows="8"
                   readonly
+                  aria-label="선택한 풀의 단어"
                   placeholder="풀 번호를 누르면 여기에 표시됩니다."
                 ></textarea>
               </section>
-            </div>
-            <div class="cta-row quiz-start-row">
-              <button class="btn primary" id="quiz-start-ko-btn" type="button">한국어 예문</button>
-              <button class="btn ghost" id="quiz-start-en-btn" type="button">영어 예문</button>
+              <div class="cta-row quiz-start-row">
+                <button class="btn primary" id="quiz-start-ko-btn" type="button">한국어 예문</button>
+                <button class="btn ghost" id="quiz-start-en-btn" type="button">영어 예문</button>
+              </div>
+              <section class="quiz-pane quiz-pane-save">
+                <h3 class="quiz-pane-title">단어 저장 · 삭제</h3>
+                <textarea
+                  id="quiz-text"
+                  rows="3"
+                  aria-label="새 단어"
+                  placeholder="apart&#10;break up&#10;continent"
+                ></textarea>
+                <div class="cta-row quiz-pane-actions">
+                  <button class="btn ghost small" id="quiz-save-btn" type="button">단어 저장</button>
+                  <button class="btn ghost small danger" id="quiz-delete-btn" type="button">단어 삭제</button>
+                </div>
+              </section>
             </div>
           </article>
         </div>
 
         <article class="card-stage quiz-card" id="quiz-play-panel" hidden>
-          <p class="ko" id="quiz-prompt">다음 뜻의 영어 스펠링을 쓰세요</p>
+          <div class="quiz-play-top">
+            <p class="ko" id="quiz-prompt">다음 뜻의 영어 스펠링을 쓰세요</p>
+            <button class="btn ghost small quiz-retry-btn" id="quiz-retry-btn" type="button">다시 도전</button>
+          </div>
           <p class="en" id="quiz-sentence">사과</p>
           <button class="btn ghost small quiz-listen" id="quiz-listen-btn" type="button">▶ 원어민 발음 듣기</button>
           <form id="quiz-form" class="quiz-form">
@@ -222,10 +224,10 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="./config.js?v=29"></script>
-    <script src="./cloud.js?v=29"></script>
-    <script src="./data.js?v=29"></script>
-    <script src="./quiz.js?v=29"></script>
-    <script src="./app.js?v=29"></script>
+    <script src="./config.js?v=36"></script>
+    <script src="./cloud.js?v=36"></script>
+    <script src="./data.js?v=36"></script>
+    <script src="./quiz.js?v=36"></script>
+    <script src="./app.js?v=36"></script>
   </body>
 </html>

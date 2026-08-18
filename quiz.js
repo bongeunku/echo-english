@@ -47,6 +47,7 @@
     form: document.getElementById("quiz-form"),
     answer: document.getElementById("quiz-answer"),
     checkBtn: document.getElementById("quiz-check-btn"),
+    retryBtn: document.getElementById("quiz-retry-btn"),
     feedback: document.getElementById("quiz-feedback"),
     nextBtn: document.getElementById("quiz-next-btn"),
     missList: document.getElementById("quiz-miss-list"),
@@ -273,6 +274,11 @@
     return ids.sort((a, b) => a - b);
   }
 
+  function lastPoolId(ids) {
+    const list = (ids && ids.length ? ids : localPoolIds()).map(Number).filter((id) => id > 0);
+    return list.length ? Math.max(...list) : 0;
+  }
+
   function localPoolWords(poolId) {
     const id = Number(poolId) || 1;
     return Object.values(loadMemory().words)
@@ -313,13 +319,13 @@
     state.pools = ids || [];
     if (!els.poolBtns) return;
     if (!state.pools.length) {
-      els.poolBtns.innerHTML = '<span class="quiz-text-label">저장된 풀이 없습니다.</span>';
+      els.poolBtns.innerHTML = '<span class="quiz-pool-empty">아직 없음</span>';
       return;
     }
     els.poolBtns.innerHTML = state.pools
       .map(
         (id) =>
-          `<button type="button" class="btn ghost small${Number(id) === Number(state.poolId) ? " selected" : ""}" data-pool="${id}">${id}</button>`
+          `<button type="button" class="quiz-pool-num${Number(id) === Number(state.poolId) ? " selected" : ""}" data-pool="${id}">${id}</button>`
       )
       .join("");
   }
@@ -702,6 +708,7 @@
     }
     els.nextBtn.hidden = true;
     els.nextBtn.textContent = state.index >= state.questions.length - 1 ? "결과 보기" : "다음";
+    els.nextBtn.dataset.done = "";
     resetAnswerStyle();
     els.answer.value = "";
     els.answer.disabled = false;
@@ -778,15 +785,33 @@
     finishAnswer(correct, typed);
   }
 
+  function shuffle(list) {
+    const next = (list || []).slice();
+    for (let i = next.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = next[i];
+      next[i] = next[j];
+      next[j] = temp;
+    }
+    return next;
+  }
+
   function beginQuiz(questions, quizType) {
-    state.questions = questions;
+    state.questions = shuffle(questions);
     state.index = 0;
     state.score = 0;
     state.misses = [];
+    state.answered = false;
     state.quizType = quizType || "ko";
     els.setupPanel.hidden = true;
     els.playPanel.hidden = false;
+    els.nextBtn.dataset.done = "";
     renderQuestion();
+  }
+
+  function retryQuiz() {
+    if (!state.questions.length) return;
+    beginQuiz(state.questions, state.quizType || "ko");
   }
 
   async function saveCurrentList() {
@@ -859,7 +884,7 @@
     if (state.poolId && ids.includes(state.poolId)) {
       await loadPool(state.poolId, false);
     } else if (ids.length) {
-      await loadPool(ids[0], false);
+      await loadPool(lastPoolId(ids), false);
     } else {
       state.poolId = 0;
       state.loadedWords = [];
@@ -965,7 +990,7 @@
     await ensureCloud();
     const ids = await refreshPools();
     await updateMemoryStatus();
-    if (ids.length) await loadPool(ids[0], false);
+    if (ids.length) await loadPool(lastPoolId(ids), false);
   }
 
   if (els.poolBtns) {
@@ -990,12 +1015,13 @@
       await window.EchoCloud.signOut();
       await updateMemoryStatus();
       const ids = await refreshPools();
-      if (ids.length) await loadPool(ids[0], false);
+      if (ids.length) await loadPool(lastPoolId(ids), false);
     });
   }
   if (els.startKoBtn) els.startKoBtn.addEventListener("click", () => startQuiz("ko"));
   if (els.startEnBtn) els.startEnBtn.addEventListener("click", () => startQuiz("en"));
   if (els.startBtn) els.startBtn.addEventListener("click", () => startQuiz("ko"));
+  if (els.retryBtn) els.retryBtn.addEventListener("click", retryQuiz);
   els.form.addEventListener("submit", checkAnswer);
   els.nextBtn.addEventListener("click", () => {
     if (els.nextBtn.dataset.done === "1") {
@@ -1016,5 +1042,5 @@
     window.speechSynthesis.getVoices();
   }
 
-  window.EchoQuiz = { open, stop: stopSpeech };
+  window.EchoQuiz = { open, stop: stopSpeech, showSetup: resetSetup };
 })();
