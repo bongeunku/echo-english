@@ -5,7 +5,7 @@ export default function Home({ onStart, onContinue, continueLabel, canContinue }
         <h1>
           따라하기만 하면
           <br />
-          영어가 됩니다
+          영어가 열립니다
         </h1>
         <p className="hero-sub">
           문장을 듣고, 바로 따라 말하세요. 문법 공부 없이 <em>입과 귀가 먼저</em> 익숙해지는

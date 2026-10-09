@@ -114,7 +114,7 @@ export default function App() {
       </main>
 
       <footer className="foot">
-        <p>마이크 권한을 허용하면 따라 말한 내용도 확인할 수 있어요. (Chrome 권장)</p>
+        <p>마이크 권한을 허용하면 따라 말한 내용도 확인할 수 있어요. · Chrome 권장</p>
       </footer>
     </>
   );
