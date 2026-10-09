@@ -249,8 +249,14 @@ export default function QuizView({ onBack }) {
     setProgressRatio((index + 1) / questions.length);
     const word = questions[index].answerEn || questions[index].answer;
     if (word) speakWord(word);
-    requestAnimationFrame(() => answerInputRef.current?.focus());
   }, [phase, index, questions, showResult]);
+
+  // 입력이 다시 활성화된 뒤에 포커스 (disabled 상태에서 focus 실패 방지)
+  useEffect(() => {
+    if (phase !== "play" || showResult || answered || !questions[index]) return;
+    const timer = window.setTimeout(() => answerInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [phase, index, questions, showResult, answered]);
 
   function checkAnswer(event) {
     event.preventDefault();
@@ -303,6 +309,21 @@ export default function QuizView({ onBack }) {
     }
     setIndex((value) => value + 1);
   }
+
+  const goNextRef = useRef(goNext);
+  goNextRef.current = goNext;
+
+  // keyup: 스페이스를 누른 채 다음 문항 입력칸에 글자가 들어가는 것 방지
+  useEffect(() => {
+    if (phase !== "play" || !(answered || showResult)) return;
+    function onKeyUp(event) {
+      if (event.code !== "Space" && event.key !== " ") return;
+      event.preventDefault();
+      goNextRef.current();
+    }
+    window.addEventListener("keyup", onKeyUp);
+    return () => window.removeEventListener("keyup", onKeyUp);
+  }, [phase, answered, showResult]);
 
   function retryQuiz() {
     if (!questions.length) return;
