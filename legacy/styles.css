@@ -12,8 +12,15 @@
   --glow: rgba(15, 122, 108, 0.28);
   --shadow: 0 18px 50px rgba(20, 34, 31, 0.1);
   --radius: 22px;
-  --font-display: "Bricolage Grotesque", sans-serif;
+  --font-display: "Bricolage Grotesque", "IBM Plex Sans KR", sans-serif;
   --font-body: "IBM Plex Sans KR", sans-serif;
+}
+
+textarea,
+input,
+button,
+select {
+  font-family: inherit;
 }
 
 *,

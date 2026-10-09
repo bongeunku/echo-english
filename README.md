@@ -6,39 +6,35 @@
 
 https://bongeunku.github.io/echo-english/
 
-## 로컬에서 실행
+`main`에 push되면 GitHub Actions가 Vite 빌드 후 GitHub Pages에 배포합니다.
 
-음성 파일(`audio/`)이 이미 들어 있어서, 정적 서버만 켜도 됩니다.
+## 로컬 개발
 
-```bash
-py -3 -m http.server 5173
-```
-
-브라우저에서 http://localhost:5173 접속
-
-고급(실시간 Neural TTS):
+- Node.js 18+ (권장: LTS)
 
 ```bash
-py -3 -m pip install edge-tts
-py -3 server.py
+npm install
+npm run dev
 ```
+
+브라우저: http://127.0.0.1:5173/
+
+```bash
+npm run build    # dist/ 생성 (Pages용 base=/echo-english/)
+npm run preview  # 빌드 결과 미리보기
+```
+
+## 구성
+
+- `src/` — React 앱 (연습 + 스펠링 퀴즈)
+- `legacy/` — 이전 vanilla HTML/JS/CSS (참고용)
+- `audio/` — 사전 녹음 MP3
+- `server.py` — (선택) 로컬 Neural TTS
+- `.github/workflows/deploy-pages.yml` — Pages 자동 배포
 
 ## 사용법
 
 1. **오늘 연습 시작** → 주제 선택
-2. 상단에서 **미국 음성** 고르기 (Ava 추천)
-3. **듣기** — 문장을 먼저 듣기
-4. **따라하기** — 듣고 바로 따라 말하기 (마이크 허용 시 유사도 표시)
-5. **다음** — 다음 문장
-
-Chrome 브라우저를 권장합니다. (말하기 인식)
-
-## 구성
-
-- `index.html` — 화면
-- `styles.css` — 스타일
-- `data.js` — 연습 문장
-- `app.js` — 따라하기 / 음성 재생 / 인식
-- `audio/` — 미국식 Neural 음성 MP3
-- `server.py` — (선택) 실시간 TTS 서버
-- `generate_audio.py` — 음성 파일 재생성 스크립트
+2. **듣기** → **따라하기** → **다음**
+3. 스펠링 퀴즈는 풀 저장·GitHub 로그인(공유) 가능
+4. Chrome 권장 (말하기 인식)
