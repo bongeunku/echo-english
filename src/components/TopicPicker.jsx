@@ -19,7 +19,7 @@ export default function TopicPicker({ onSelectTopic, onAllListen, onOpenQuiz }) 
               {topic.emoji}
             </span>
             <h3>{topic.title}</h3>
-            <p>{topic.desc}222</p>
+            <p>{topic.desc}</p>
             <div className="meta">{topic.lines.length}문장 · 따라하기</div>
           </button>
         ))}
