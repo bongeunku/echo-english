@@ -261,9 +261,10 @@ export default function QuizView({ onBack }) {
 
     const saved = rememberWords(items, poolId || 1);
     if (echoCloud.isReady() && poolId) echoCloud.upsertWords(saved, poolId);
-    prefetchAudio(items);
 
     const shuffled = shuffle(built);
+    // 첫 문항부터 바로 들리도록 앞쪽 단어 오디오만 백그라운드 프리패치
+    prefetchAudio(shuffled.map((q) => ({ en: q.answerEn || q.answer })));
     setQuizType(mode);
     setQuestions(shuffled);
     setIndex(0);

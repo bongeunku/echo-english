@@ -145,7 +145,16 @@ async function setCachedAudio(slug, blob) {
   }
 }
 
+let neuralUnavailable = false;
+
+function canUseNeuralTts() {
+  if (neuralUnavailable) return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1";
+}
+
 async function fetchNeuralAudio(text) {
+  if (!canUseNeuralTts()) return null;
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 700);
   try {
@@ -153,14 +162,37 @@ async function fetchNeuralAudio(text) {
       `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent("en-US-JennyNeural")}&speed=1`,
       { signal: controller.signal }
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      neuralUnavailable = true;
+      return null;
+    }
     const type = res.headers.get("content-type") || "";
-    if (!type.includes("audio")) return null;
+    if (!type.includes("audio")) {
+      neuralUnavailable = true;
+      return null;
+    }
     return res.blob();
   } catch {
+    neuralUnavailable = true;
     return null;
   } finally {
     window.clearTimeout(timer);
+  }
+}
+
+async function fetchAndCacheUrl(slug, url, timeoutMs = 2000) {
+  try {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal });
+    window.clearTimeout(timer);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (blob.size < 1200) return null;
+    await setCachedAudio(slug, blob);
+    return blob;
+  } catch {
+    return null;
   }
 }
 
@@ -258,28 +290,37 @@ export async function speakWord(text) {
   const slug = wordSlug(spoken);
   const stillActive = () => token === speakToken;
 
-  const cached = await withTimeout(getCachedAudio(slug), 400);
+  // 1) 캐시 즉시
+  const cached = await withTimeout(getCachedAudio(slug), 150);
   if (!stillActive()) return;
   if (cached && cached.size >= 1200 && (await playBlob(cached, 1000))) return;
 
-  const localUrl = quizAudioUrl(spoken);
-  if (await localFileExists(localUrl)) {
-    if (!stillActive()) return;
-    if (await playFromUrl(localUrl, 1000)) return;
-  }
+  // 2) 로컬 mp3 — HEAD 없이 바로 재생 시도 (실패 시 빠르게 다음)
+  if (!stillActive()) return;
+  if (await playFromUrl(quizAudioUrl(spoken), 500)) return;
 
+  // 3) 로컬 TTS는 localhost에서만 (Pages에는 /api/tts 없음 → 기다리기만 함)
   if (!stillActive()) return;
   const neural = await fetchNeuralAudio(spoken);
   if (!stillActive()) return;
   if (neural && (await cacheAndPlay(slug, neural))) return;
 
+  // 4) Youdao 우선 (빠르고 영어 단어에 잘 됨) → 성공 시 캐시
   if (!stillActive()) return;
-  const dictUrl = await dictionaryAudioUrl(spoken);
-  if (!stillActive()) return;
-  if (dictUrl && (await playFromUrl(dictUrl, 1500))) return;
+  const youdao = youdaoUsUrl(spoken);
+  if (await playFromUrl(youdao, 1800)) {
+    fetchAndCacheUrl(slug, youdao, 2500);
+    return;
+  }
 
+  // 5) 사전 오디오
   if (!stillActive()) return;
-  if (await playFromUrl(youdaoUsUrl(spoken), 1500)) return;
+  const dictUrl = await withTimeout(dictionaryAudioUrl(spoken), 600);
+  if (!stillActive()) return;
+  if (dictUrl && (await playFromUrl(dictUrl, 1500))) {
+    fetchAndCacheUrl(slug, dictUrl, 2500);
+    return;
+  }
 
   if (!stillActive()) return;
   await speakLocal(spoken, "en-US");
@@ -292,15 +333,15 @@ export function speakKorean(text) {
   return speakLocal(spoken, "ko-KR");
 }
 
-/** 로컬/캐시만 가볍게 확인. 네트워크 TTS는 speakWord 시점에 가져옴 (대량 풀 로딩 지연 방지). */
+/** 다음 문항용 Youdao 오디오만 소량 미리 받아 첫 발음 지연을 줄임. */
 export async function prefetchAudio(items) {
-  const list = (items || []).slice(0, 30);
-  const jobs = list.map(async (item) => {
-    const text = item.en || item.answer;
-    if (!text) return;
+  const list = (items || []).slice(0, 6);
+  for (const item of list) {
+    const text = item.en || item.answerEn || item.answer;
+    if (!text) continue;
     const slug = wordSlug(text);
-    if (await getCachedAudio(slug)) return;
-    await localFileExists(quizAudioUrl(text));
-  });
-  await Promise.all(jobs);
+    if (await getCachedAudio(slug)) continue;
+    if (await localFileExists(quizAudioUrl(text))) continue;
+    await fetchAndCacheUrl(slug, youdaoUsUrl(text), 2000);
+  }
 }
