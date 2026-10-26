@@ -3,6 +3,8 @@ import { lookupMeaning, normalizeAnswer } from "./vocabParse";
 const MEMORY_KEY = "echo-quiz-memory-v1";
 const INTERVALS = [1, 3, 7, 14, 30];
 
+let memoryCache = null;
+
 function todayStamp() {
   const now = new Date();
   return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
@@ -13,9 +15,13 @@ export function memoryKey(en, poolId) {
 }
 
 export function loadMemory() {
+  if (memoryCache) return memoryCache;
   try {
     const data = JSON.parse(localStorage.getItem(MEMORY_KEY) || "{}");
-    if (!data.words || typeof data.words !== "object") return { words: {} };
+    if (!data.words || typeof data.words !== "object") {
+      memoryCache = { words: {} };
+      return memoryCache;
+    }
     const next = { words: {} };
     Object.entries(data.words).forEach(([key, word]) => {
       if (!word) return;
@@ -26,23 +32,27 @@ export function loadMemory() {
       const poolId = word.poolId || 1;
       next.words[memoryKey(word.en || key, poolId)] = { ...word, poolId };
     });
-    return next;
+    memoryCache = next;
+    return memoryCache;
   } catch {
-    return { words: {} };
+    memoryCache = { words: {} };
+    return memoryCache;
   }
 }
 
 function saveMemory(memory) {
+  memoryCache = memory;
   localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
 }
 
 export function rememberWords(items, poolId) {
   const id = Number(poolId) > 0 ? Number(poolId) : 1;
   const memory = loadMemory();
+  const saved = [];
   items.forEach((item) => {
     const key = memoryKey(item.en, id);
     const existing = memory.words[key] || {};
-    memory.words[key] = {
+    const next = {
       en: item.en,
       ko: item.ko || existing.ko || lookupMeaning(item.en),
       poolId: id,
@@ -54,11 +64,11 @@ export function rememberWords(items, poolId) {
       correctCount: existing.correctCount || 0,
       updatedAt: Date.now(),
     };
+    memory.words[key] = next;
+    saved.push(next);
   });
   saveMemory(memory);
-  return Object.values(memory.words).filter(
-    (word) => word.poolId === id && items.some((item) => normalizeAnswer(item.en) === normalizeAnswer(word.en))
-  );
+  return saved;
 }
 
 export function forgetWords(items, poolId) {

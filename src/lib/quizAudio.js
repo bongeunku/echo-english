@@ -292,36 +292,15 @@ export function speakKorean(text) {
   return speakLocal(spoken, "ko-KR");
 }
 
+/** 로컬/캐시만 가볍게 확인. 네트워크 TTS는 speakWord 시점에 가져옴 (대량 풀 로딩 지연 방지). */
 export async function prefetchAudio(items) {
-  const list = items || [];
-  for (const item of list) {
+  const list = (items || []).slice(0, 30);
+  const jobs = list.map(async (item) => {
     const text = item.en || item.answer;
-    if (!text) continue;
+    if (!text) return;
     const slug = wordSlug(text);
-    if (await getCachedAudio(slug)) continue;
-    if (await localFileExists(quizAudioUrl(text))) continue;
-    try {
-      const blob = await fetchNeuralAudio(text);
-      if (blob && blob.size >= 1200) {
-        await setCachedAudio(slug, blob);
-        continue;
-      }
-    } catch {
-      /* continue */
-    }
-    const dictUrl = await dictionaryAudioUrl(text);
-    if (!dictUrl) continue;
-    try {
-      const controller = new AbortController();
-      const timer = window.setTimeout(() => controller.abort(), 1500);
-      const clip = await fetch(dictUrl, { signal: controller.signal });
-      window.clearTimeout(timer);
-      if (clip.ok) {
-        const blob = await clip.blob();
-        if (blob.size >= 1200) await setCachedAudio(slug, blob);
-      }
-    } catch {
-      /* continue */
-    }
-  }
+    if (await getCachedAudio(slug)) return;
+    await localFileExists(quizAudioUrl(text));
+  });
+  await Promise.all(jobs);
 }

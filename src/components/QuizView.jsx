@@ -80,21 +80,33 @@ export default function QuizView({ onBack }) {
         return;
       }
 
-      let words = [];
+      // 로컬을 먼저 보여 체감 로딩을 줄임
+      let words = localPoolWords(pool);
       let source = "local";
+      setPoolId(pool);
+      if (words.length) {
+        setLoadedWords(words);
+        setLoadedText(words.map(formatWordLine).join("\n"));
+      }
+
       if (echoCloud.isReady()) {
         const remote = await echoCloud.pullPool(pool);
         if (!remote.error && remote.words.length) {
           mergeRemoteIntoMemory(remote.words, pool);
-          words = remote.words;
+          words = localPoolWords(pool);
           source = "cloud";
+          setLoadedWords(words);
+          setLoadedText(words.map(formatWordLine).join("\n"));
+        } else if (!words.length) {
+          words = [];
         }
       }
-      if (!words.length) words = localPoolWords(pool);
 
-      setPoolId(pool);
-      setLoadedWords(words);
-      setLoadedText(words.map(formatWordLine).join("\n"));
+      if (!words.length) {
+        setLoadedWords([]);
+        setLoadedText("");
+      }
+
       await refreshPools();
       await refreshStatus(pool);
       if (words.length) prefetchAudio(words);

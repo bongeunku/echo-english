@@ -89,9 +89,8 @@ function failSave(error) {
 }
 
 async function writeRows(rows) {
-  const conflicts = [];
-  if (!state.noPoolColumn) conflicts.push("pool_id,en_key");
-  conflicts.push("en_key");
+  // pool이 있으면 pool_id+en_key만 사용. en_key만으로 upsert하면 다른 풀 단어를 덮어씀.
+  const conflicts = state.noPoolColumn ? ["en_key"] : ["pool_id,en_key"];
   let lastError = null;
   for (const onConflict of conflicts) {
     const { error } = await state.supabase.from("vocab_words").upsert(rows, { onConflict });
@@ -113,6 +112,21 @@ async function writeRows(rows) {
     return true;
   }
   return failSave(inserted.error || lastError);
+}
+
+/** Supabase 기본 1000행 제한을 넘는 조회용 */
+async function fetchAllRows(buildQuery, pageSize = 1000) {
+  const rows = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    if (!data || !data.length) break;
+    rows.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: rows, error: null };
 }
 
 export const echoCloud = {
@@ -210,10 +224,9 @@ export const echoCloud = {
       const count = await this.countWords();
       return count ? [1] : [];
     }
-    const { data, error } = await state.supabase
-      .from("vocab_words")
-      .select("pool_id")
-      .order("pool_id", { ascending: true });
+    const { data, error } = await fetchAllRows(() =>
+      state.supabase.from("vocab_words").select("pool_id").order("pool_id", { ascending: true })
+    );
     if (error) {
       markMissingPool(error);
       if (state.noPoolColumn) {
@@ -231,16 +244,34 @@ export const echoCloud = {
   },
 
   async nextPoolId() {
-    const ids = await this.listPools();
-    return ids.length ? Math.max(...ids) + 1 : 1;
+    if (!state.ready) return 1;
+    if (state.noPoolColumn) return 1;
+    const { data, error } = await state.supabase
+      .from("vocab_words")
+      .select("pool_id")
+      .order("pool_id", { ascending: false })
+      .limit(1);
+    if (error) {
+      markMissingPool(error);
+      if (state.noPoolColumn) return 1;
+      const ids = await this.listPools();
+      return ids.length ? Math.max(...ids) + 1 : 1;
+    }
+    const max = data && data[0] ? Number(data[0].pool_id) || 0 : 0;
+    return max + 1;
   },
 
   async pullPool(poolId) {
     if (!state.ready) return { words: [], poolId, error: "not-ready" };
     const id = Number(poolId) || 1;
-    let query = state.supabase.from("vocab_words").select("*").order("updated_at", { ascending: true });
-    if (!state.noPoolColumn) query = query.eq("pool_id", id);
-    const { data, error } = await query;
+    const { data, error } = await fetchAllRows(() => {
+      let query = state.supabase
+        .from("vocab_words")
+        .select("*")
+        .order("updated_at", { ascending: true });
+      if (!state.noPoolColumn) query = query.eq("pool_id", id);
+      return query;
+    });
     if (error) {
       markMissingPool(error);
       if (state.noPoolColumn) return this.pullPool(1);
@@ -259,8 +290,12 @@ export const echoCloud = {
     if (!state.ready || !words.length) return false;
     const id = state.noPoolColumn ? 1 : Number(poolId) > 0 ? Number(poolId) : await this.nextPoolId();
     const rows = words.map((word) => rowFromWord({ ...word, poolId: id }, !state.noPoolColumn));
-    const ok = await writeRows(rows);
-    return ok ? id : false;
+    const chunkSize = 200;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const ok = await writeRows(rows.slice(i, i + chunkSize));
+      if (!ok) return false;
+    }
+    return id;
   },
 
   async deleteWords(words, poolId) {
