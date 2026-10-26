@@ -176,15 +176,16 @@ export default function QuizView({ onBack }) {
 
     const cloudOk = echoCloud.isReady() || (await echoCloud.init());
     if (!cloudOk) {
-      const localId = (localPoolIds().pop() || 0) + 1;
+      const localId = lastPoolId(localPoolIds()) + 1 || 1;
       rememberWords(items, localId);
       setHint(`${localId}번 풀에 이 기기에만 저장했습니다. 연결 후 다시 저장해 주세요.`);
       await refreshPools();
+      setPools((prev) => [...new Set([...prev, localId])].sort((a, b) => a - b));
       await loadPool(localId, false);
       return;
     }
 
-    const nextId = await echoCloud.nextPoolId();
+    const nextId = Math.max(await echoCloud.nextPoolId(), lastPoolId(localPoolIds()) + 1);
     const pooled = rememberWords(items, nextId);
     const ok = await echoCloud.upsertWords(pooled, nextId);
     if (!ok) {
@@ -196,6 +197,10 @@ export default function QuizView({ onBack }) {
     setDraftText("");
     localStorage.removeItem("echo-quiz-list-v1");
     prefetchAudio(items);
+    // 저장 직후 풀 버튼을 바로 갱신 (새로고침 전에 12번이 안 보이던 문제)
+    setPools((prev) => [...new Set([...prev, nextId])].sort((a, b) => a - b));
+    await refreshPools();
+    setPools((prev) => [...new Set([...prev, nextId])].sort((a, b) => a - b));
     await loadPool(nextId, false);
     setHint(`${items.length}개 단어를 ${nextId}번 풀에 저장했습니다.`);
   }
