@@ -61,12 +61,33 @@ export default function QuizView({ onBack }) {
   }, []);
 
   const refreshPools = useCallback(async () => {
-    let ids = [];
-    if (echoCloud.isReady()) ids = await echoCloud.listPools();
-    if (!ids.length) ids = localPoolIds();
+    const cloudIds = echoCloud.isReady() ? await echoCloud.listPools() : [];
+    const localIds = localPoolIds();
+    // 클라우드만 보면 이 기기 전용 풀(예: 12번)이 빠져 번호가 줄어듦
+    const ids = [...new Set([...cloudIds, ...localIds].map(Number).filter((id) => id > 0))].sort(
+      (a, b) => a - b
+    );
     setPools(ids);
     return ids;
   }, []);
+
+  const applyPoolWords = useCallback((pool, words) => {
+    setPoolId(pool);
+    setLoadedWords(words);
+    setLoadedText(words.map(formatWordLine).join("\n"));
+  }, []);
+
+  const syncPoolFromCloud = useCallback(
+    async (pool) => {
+      if (!echoCloud.isReady() || !pool) return localPoolWords(pool);
+      const remote = await echoCloud.pullPool(pool);
+      if (!remote.error && remote.words.length) {
+        mergeRemoteIntoMemory(remote.words, pool);
+      }
+      return localPoolWords(pool);
+    },
+    []
+  );
 
   const loadPool = useCallback(
     async (id, announce) => {
@@ -75,41 +96,31 @@ export default function QuizView({ onBack }) {
         setPoolId(0);
         setLoadedWords([]);
         setLoadedText("");
-        await refreshPools();
         await refreshStatus(0);
         return;
       }
 
-      // 로컬을 먼저 보여 체감 로딩을 줄임
+      // 로컬 즉시 표시 — 클라우드/오디오는 뒤에서 맞춤
       let words = localPoolWords(pool);
       let source = "local";
-      setPoolId(pool);
-      if (words.length) {
-        setLoadedWords(words);
-        setLoadedText(words.map(formatWordLine).join("\n"));
-      }
+      applyPoolWords(pool, words);
+      await refreshStatus(pool);
 
-      if (echoCloud.isReady()) {
-        const remote = await echoCloud.pullPool(pool);
-        if (!remote.error && remote.words.length) {
-          mergeRemoteIntoMemory(remote.words, pool);
-          words = localPoolWords(pool);
-          source = "cloud";
-          setLoadedWords(words);
-          setLoadedText(words.map(formatWordLine).join("\n"));
-        } else if (!words.length) {
-          words = [];
+      if (announce) {
+        if (words.length) {
+          setHint(`이 기기 ${pool}번 풀 단어 ${words.length}개를 열었습니다.`);
+        } else {
+          setHint(`${pool}번 풀을 불러오는 중…`);
         }
       }
 
-      if (!words.length) {
-        setLoadedWords([]);
-        setLoadedText("");
+      if (echoCloud.isReady()) {
+        words = await syncPoolFromCloud(pool);
+        source = words.length ? "cloud" : source;
+        applyPoolWords(pool, words);
+        await refreshStatus(pool);
       }
 
-      await refreshPools();
-      await refreshStatus(pool);
-      if (words.length) prefetchAudio(words);
       if (announce) {
         if (!words.length) {
           setHint(`${pool}번 풀에 단어가 없습니다.`);
@@ -119,23 +130,37 @@ export default function QuizView({ onBack }) {
         setHint(`${where} ${pool}번 풀 단어 ${words.length}개를 열었습니다.`);
       }
     },
-    [refreshPools, refreshStatus]
+    [applyPoolWords, refreshStatus, syncPoolFromCloud]
   );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // 클라우드 기다리지 말고 로컬 풀을 바로 그림
+      const localIds = localPoolIds();
+      if (localIds.length) {
+        setPools(localIds);
+        const last = lastPoolId(localIds);
+        applyPoolWords(last, localPoolWords(last));
+        setStatus(`저장된 단어 ${localWordCount()}개 · 풀 ${last} · 불러오는 중…`);
+      }
+
       await echoCloud.init();
       if (cancelled) return;
       const ids = await refreshPools();
-      await refreshStatus(0);
-      if (ids.length) await loadPool(lastPoolId(ids), false);
+      await refreshStatus(lastPoolId(ids) || 0);
+      if (!ids.length) return;
+      const last = lastPoolId(ids);
+      const words = await syncPoolFromCloud(last);
+      if (cancelled) return;
+      applyPoolWords(last, words);
+      await refreshStatus(last);
     })();
     return () => {
       cancelled = true;
       stopQuizSpeech();
     };
-  }, [loadPool, refreshPools, refreshStatus]);
+  }, [applyPoolWords, refreshPools, refreshStatus, syncPoolFromCloud]);
 
   async function handleSave() {
     const raw = draftText.trim();

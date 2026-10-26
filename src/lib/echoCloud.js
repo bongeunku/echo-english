@@ -224,9 +224,12 @@ export const echoCloud = {
       const count = await this.countWords();
       return count ? [1] : [];
     }
-    const { data, error } = await fetchAllRows(() =>
-      state.supabase.from("vocab_words").select("pool_id").order("pool_id", { ascending: true })
-    );
+    // 전체 행을 받지 않고 최대 pool_id만 구한 뒤, 존재 여부만 병렬 확인
+    const { data, error } = await state.supabase
+      .from("vocab_words")
+      .select("pool_id")
+      .order("pool_id", { ascending: false })
+      .limit(1);
     if (error) {
       markMissingPool(error);
       if (state.noPoolColumn) {
@@ -235,12 +238,19 @@ export const echoCloud = {
       }
       return [];
     }
-    const ids = [];
-    (data || []).forEach((row) => {
-      const id = Number(row.pool_id) || 1;
-      if (!ids.includes(id)) ids.push(id);
-    });
-    return ids;
+    const max = data && data[0] ? Number(data[0].pool_id) || 0 : 0;
+    if (max <= 0) return [];
+    const found = await Promise.all(
+      Array.from({ length: max }, (_, i) => i + 1).map(async (id) => {
+        const { count, error: countError } = await state.supabase
+          .from("vocab_words")
+          .select("*", { count: "exact", head: true })
+          .eq("pool_id", id);
+        if (countError || !count) return null;
+        return id;
+      })
+    );
+    return found.filter(Boolean);
   },
 
   async nextPoolId() {
